@@ -1,291 +1,504 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>3D Taxi Demo</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      overflow: hidden;
-      background: #111;
-      touch-action: none;
-      font-family: sans-serif;
+<meta charset="UTF-8" />
+<title>Simple 3D Taxi</title>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no" />
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #111;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  canvas {
+    display: block;
+    background: #222;
+  }
+  /* Mobile controls */
+  #joystickContainer {
+    position: fixed;
+    left: 10px;
+    bottom: 10px;
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    border: 2px solid #666;
+    box-sizing: border-box;
+    touch-action: none;
+  }
+  #joystick {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 60px;
+    height: 60px;
+    margin-left: -30px;
+    margin-top: -30px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.2);
+    touch-action: none;
+  }
+  #driftButton {
+    position: fixed;
+    right: 10px;
+    bottom: 30px;
+    width: 90px;
+    height: 90px;
+    border-radius: 50%;
+    background: rgba(255,255,0,0.2);
+    border: 2px solid #cc0;
+    color: #fff;
+    font-weight: bold;
+    font-family: sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;
+  }
+  @media (min-width: 900px) {
+    /* Hide mobile controls on larger screens (assume PC) */
+    #joystickContainer, #driftButton {
+      display: none;
     }
-    #joystick-container {
-      position: fixed;
-      left: 10px;
-      bottom: 10px;
-      width: 120px;
-      height: 120px;
-      border-radius: 50%;
-      border: 2px solid #555;
-      box-sizing: border-box;
-      touch-action: none;
-      display: none; /* shown on touch devices */
-    }
-    #joystick {
-      position: absolute;
-      left: 50%;
-      top: 50%;
-      width: 50px;
-      height: 50px;
-      margin-left: -25px;
-      margin-top: -25px;
-      border-radius: 50%;
-      background: rgba(255,255,255,0.4);
-      touch-action: none;
-    }
-    #drift-btn {
-      position: fixed;
-      right: 10px;
-      bottom: 30px;
-      width: 80px;
-      height: 80px;
-      border-radius: 50%;
-      border: none;
-      background: rgba(255, 215, 0, 0.8);
-      color: #000;
-      font-weight: bold;
-      font-size: 16px;
-      display: none; /* shown on touch devices */
-      touch-action: none;
-    }
-    #hint {
-      position: fixed;
-      top: 10px;
-      left: 10px;
-      color: #fff;
-      font-size: 14px;
-      background: rgba(0,0,0,0.4);
-      padding: 6px 10px;
-      border-radius: 4px;
-    }
-  </style>
+  }
+</style>
 </head>
 <body>
-  <div id="hint">
-    PC: WASD to move, Left Shift to drift<br>
-    Mobile: Joystick + Drift button
-  </div>
-  <div id="joystick-container">
-    <div id="joystick"></div>
-  </div>
-  <button id="drift-btn">DRIFT</button>
+<canvas id="game"></canvas>
+<div id="joystickContainer">
+  <div id="joystick"></div>
+</div>
+<div id="driftButton">DRIFT</div>
 
-  <!-- Three.js CDN -->
-  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script>
+(function() {
+  const canvas = document.getElementById('game');
+  const gl = canvas.getContext('webgl', { antialias: true }) || canvas.getContext('experimental-webgl');
+  if (!gl) {
+    alert('WebGL not supported');
+    return;
+  }
 
-  <script>
-    // Basic Three.js setup
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x202020);
+  function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+  }
+  window.addEventListener('resize', resize);
+  resize();
 
-    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 8, -15);
-    camera.lookAt(0, 0, 0);
+  // Simple vertex + fragment shaders (flat color)
+  const vsSource = `
+    attribute vec3 aPosition;
+    attribute vec3 aColor;
+    uniform mat4 uProjection;
+    uniform mat4 uView;
+    uniform mat4 uModel;
+    varying vec3 vColor;
+    void main(void) {
+      gl_Position = uProjection * uView * uModel * vec4(aPosition, 1.0);
+      vColor = aColor;
+    }
+  `;
+  const fsSource = `
+    precision mediump float;
+    varying vec3 vColor;
+    void main(void) {
+      gl_FragColor = vec4(vColor, 1.0);
+    }
+  `;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
+  function compileShader(type, source) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      console.error(gl.getShaderInfoLog(shader));
+      gl.deleteShader(shader);
+      return null;
+    }
+    return shader;
+  }
 
-    // Lights
-    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
-    scene.add(ambient);
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight.position.set(10, 20, 10);
-    scene.add(dirLight);
+  const vs = compileShader(gl.VERTEX_SHADER, vsSource);
+  const fs = compileShader(gl.FRAGMENT_SHADER, fsSource);
 
-    // Ground
-    const groundGeo = new THREE.PlaneGeometry(200, 200);
-    const groundMat = new THREE.MeshPhongMaterial({ color: 0x303030 });
-    const ground = new THREE.Mesh(groundGeo, groundMat);
-    ground.rotation.x = -Math.PI / 2;
-    scene.add(ground);
+  const program = gl.createProgram();
+  gl.attachShader(program, vs);
+  gl.attachShader(program, fs);
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    console.error(gl.getProgramInfoLog(program));
+  }
+  gl.useProgram(program);
 
-    // Taxi (yellow rectangle)
-    const taxiGeo = new THREE.BoxGeometry(2, 1, 4);
-    const taxiMat = new THREE.MeshPhongMaterial({ color: 0xffff00 });
-    const taxi = new THREE.Mesh(taxiGeo, taxiMat);
-    taxi.position.y = 0.5;
-    scene.add(taxi);
+  const aPosition = gl.getAttribLocation(program, 'aPosition');
+  const aColor = gl.getAttribLocation(program, 'aColor');
+  const uProjection = gl.getUniformLocation(program, 'uProjection');
+  const uView = gl.getUniformLocation(program, 'uView');
+  const uModel = gl.getUniformLocation(program, 'uModel');
 
-    // Simple "buildings" as big spaced-out rectangles
-    const buildingMat = new THREE.MeshPhongMaterial({ color: 0x4444aa });
-    const buildingGeo = new THREE.BoxGeometry(6, 10, 6);
-    const buildingPositions = [
-      [20, 5, 20],
-      [-25, 5, 15],
-      [30, 5, -10],
-      [-15, 5, -25],
-      [0, 5, 30],
-      [25, 5, -30],
-      [-30, 5, 0]
+  // Basic math helpers
+  function perspective(fovy, aspect, near, far) {
+    const f = 1.0 / Math.tan(fovy / 2);
+    const nf = 1 / (near - far);
+    const out = new Float32Array(16);
+    out[0] = f / aspect;
+    out[5] = f;
+    out[10] = (far + near) * nf;
+    out[11] = -1;
+    out[14] = (2 * far * near) * nf;
+    return out;
+  }
+
+  function lookAt(eye, center, up) {
+    const [ex, ey, ez] = eye;
+    const [cx, cy, cz] = center;
+    const [ux, uy, uz] = up;
+
+    let zx = ex - cx, zy = ey - cy, zz = ez - cz;
+    let len = Math.hypot(zx, zy, zz);
+    zx /= len; zy /= len; zz /= len;
+
+    let xx = uy * zz - uz * zy;
+    let xy = uz * zx - ux * zz;
+    let xz = ux * zy - uy * zx;
+    len = Math.hypot(xx, xy, xz);
+    xx /= len; xy /= len; xz /= len;
+
+    let yx = zy * xz - zz * xy;
+    let yy = zz * xx - zx * xz;
+    let yz = zx * xy - zy * xx;
+    len = Math.hypot(yx, yy, yz);
+    yx /= len; yy /= len; yz /= len;
+
+    const out = new Float32Array(16);
+    out[0] = xx; out[1] = yx; out[2] = zx; out[3] = 0;
+    out[4] = xy; out[5] = yy; out[6] = zy; out[7] = 0;
+    out[8] = xz; out[9] = yz; out[10] = zz; out[11] = 0;
+    out[12] = -(xx * ex + xy * ey + xz * ez);
+    out[13] = -(yx * ex + yy * ey + yz * ez);
+    out[14] = -(zx * ex + zy * ey + zz * ez);
+    out[15] = 1;
+    return out;
+  }
+
+  function identity() {
+    const out = new Float32Array(16);
+    out[0] = out[5] = out[10] = out[15] = 1;
+    return out;
+  }
+
+  function translate(m, v) {
+    const [x, y, z] = v;
+    const out = m.slice(0);
+    out[12] = m[0] * x + m[4] * y + m[8] * z + m[12];
+    out[13] = m[1] * x + m[5] * y + m[9] * z + m[13];
+    out[14] = m[2] * x + m[6] * y + m[10] * z + m[14];
+    out[15] = m[3] * x + m[7] * y + m[11] * z + m[15];
+    return out;
+  }
+
+  function rotateY(m, rad) {
+    const c = Math.cos(rad);
+    const s = Math.sin(rad);
+    const out = new Float32Array(16);
+    out[0] = m[0] * c + m[8] * s;
+    out[1] = m[1] * c + m[9] * s;
+    out[2] = m[2] * c + m[10] * s;
+    out[3] = m[3] * c + m[11] * s;
+    out[8] = m[0] * -s + m[8] * c;
+    out[9] = m[1] * -s + m[9] * c;
+    out[10] = m[2] * -s + m[10] * c;
+    out[11] = m[3] * -s + m[11] * c;
+    out[4] = m[4];
+    out[5] = m[5];
+    out[6] = m[6];
+    out[7] = m[7];
+    out[12] = m[12];
+    out[13] = m[13];
+    out[14] = m[14];
+    out[15] = m[15];
+    return out;
+  }
+
+  function scale(m, v) {
+    const [x, y, z] = v;
+    const out = m.slice(0);
+    out[0] *= x; out[1] *= x; out[2] *= x; out[3] *= x;
+    out[4] *= y; out[5] *= y; out[6] *= y; out[7] *= y;
+    out[8] *= z; out[9] *= z; out[10] *= z; out[11] *= z;
+    return out;
+  }
+
+  // Create a simple cube (for taxi and buildings)
+  function createCube(size, color) {
+    const s = size / 2;
+    const [r, g, b] = color;
+    // 12 triangles, 36 vertices
+    const positions = [
+      // Front
+      -s, -s,  s,  s, -s,  s,  s,  s,  s,
+      -s, -s,  s,  s,  s,  s, -s,  s,  s,
+      // Back
+       s, -s, -s, -s, -s, -s, -s,  s, -s,
+       s, -s, -s, -s,  s, -s,  s,  s, -s,
+      // Left
+      -s, -s, -s, -s, -s,  s, -s,  s,  s,
+      -s, -s, -s, -s,  s,  s, -s,  s, -s,
+      // Right
+       s, -s,  s,  s, -s, -s,  s,  s, -s,
+       s, -s,  s,  s,  s, -s,  s,  s,  s,
+      // Top
+      -s,  s,  s,  s,  s,  s,  s,  s, -s,
+      -s,  s,  s,  s,  s, -s, -s,  s, -s,
+      // Bottom
+      -s, -s, -s,  s, -s, -s,  s, -s,  s,
+      -s, -s, -s,  s, -s,  s, -s, -s,  s
     ];
-    buildingPositions.forEach(pos => {
-      const b = new THREE.Mesh(buildingGeo, buildingMat);
-      b.position.set(pos[0], pos[1], pos[2]);
-      scene.add(b);
-    });
+    const colors = [];
+    for (let i = 0; i < 36; i++) {
+      colors.push(r, g, b);
+    }
+    return { positions: new Float32Array(positions), colors: new Float32Array(colors) };
+  }
 
-    // Movement state
-    const keys = {};
-    let driftKey = false;
+  const taxiCube = createCube(1, [1.0, 1.0, 0.0]); // yellow
+  const buildingCube = createCube(1, [0.3, 0.3, 0.9]); // blue-ish
+  const groundCube = createCube(1, [0.1, 0.5, 0.1]); // green-ish
 
-    window.addEventListener('keydown', (e) => {
-      keys[e.code] = true;
-      if (e.code === 'ShiftLeft') driftKey = true;
-    });
-    window.addEventListener('keyup', (e) => {
-      keys[e.code] = false;
-      if (e.code === 'ShiftLeft') driftKey = false;
-    });
+  const positionBuffer = gl.createBuffer();
+  const colorBuffer = gl.createBuffer();
 
-    // Mobile detection (very rough)
-    const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-    const joystickContainer = document.getElementById('joystick-container');
-    const joystick = document.getElementById('joystick');
-    const driftBtn = document.getElementById('drift-btn');
+  function drawCube(cube, modelMatrix) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, cube.positions, gl.STATIC_DRAW);
+    gl.vertexAttribPointer(aPosition, 3, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(aPosition);
 
-    let joyActive = false;
-    let joyCenter = { x: 0, y: 0 };
-    let joyVector = { x: 0, y: 0 };
-    let driftTouch = false;
+    gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, cube.colors, gl.STATIC_DRAW);
+    gl.vertexAttribPointer(aColor, 3, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(aColor);
 
-    if (isTouch) {
-      joystickContainer.style.display = 'block';
-      driftBtn.style.display = 'block';
+    gl.uniformMatrix4fv(uModel, false, modelMatrix);
+    gl.drawArrays(gl.TRIANGLES, 0, 36);
+  }
+
+  // Scene setup
+  const buildings = [];
+  for (let i = 0; i < 40; i++) {
+    const x = (Math.random() - 0.5) * 80;
+    const z = (Math.random() - 0.5) * 80;
+    const h = 2 + Math.random() * 8;
+    buildings.push({ x, z, h });
+  }
+
+  // Taxi state
+  let taxi = {
+    x: 0,
+    y: 0.5,
+    z: 0,
+    rotY: 0,
+    speed: 0,
+    drift: false
+  };
+
+  // Input handling
+  const keys = {};
+  window.addEventListener('keydown', (e) => {
+    keys[e.key.toLowerCase()] = true;
+    if (e.key === 'Shift') keys['shift'] = true;
+  });
+  window.addEventListener('keyup', (e) => {
+    keys[e.key.toLowerCase()] = false;
+    if (e.key === 'Shift') keys['shift'] = false;
+  });
+
+  // Mobile joystick
+  const joystickContainer = document.getElementById('joystickContainer');
+  const joystick = document.getElementById('joystick');
+  const driftButton = document.getElementById('driftButton');
+
+  let joyActive = false;
+  let joyCenter = { x: 0, y: 0 };
+  let joyVector = { x: 0, y: 0 };
+  let driftTouch = false;
+
+  function handleJoyStart(e) {
+    e.preventDefault();
+    joyActive = true;
+    const rect = joystickContainer.getBoundingClientRect();
+    joyCenter.x = rect.left + rect.width / 2;
+    joyCenter.y = rect.top + rect.height / 2;
+    const touch = e.touches ? e.touches[0] : e;
+    updateJoy(touch.clientX, touch.clientY);
+  }
+
+  function handleJoyMove(e) {
+    if (!joyActive) return;
+    e.preventDefault();
+    const touch = e.touches ? e.touches[0] : e;
+    updateJoy(touch.clientX, touch.clientY);
+  }
+
+  function handleJoyEnd(e) {
+    e && e.preventDefault();
+    joyActive = false;
+    joyVector.x = 0;
+    joyVector.y = 0;
+    joystick.style.transform = 'translate(-50%, -50%)';
+  }
+
+  function updateJoy(x, y) {
+    const dx = x - joyCenter.x;
+    const dy = y - joyCenter.y;
+    const maxDist = 50;
+    let dist = Math.hypot(dx, dy);
+    let nx = dx, ny = dy;
+    if (dist > maxDist) {
+      nx = dx * maxDist / dist;
+      ny = dy * maxDist / dist;
+      dist = maxDist;
+    }
+    joyVector.x = nx / maxDist;
+    joyVector.y = ny / maxDist;
+    joystick.style.transform = `translate(calc(-50% + ${nx}px), calc(-50% + ${ny}px))`;
+  }
+
+  joystickContainer.addEventListener('touchstart', handleJoyStart, { passive: false });
+  joystickContainer.addEventListener('touchmove', handleJoyMove, { passive: false });
+  joystickContainer.addEventListener('touchend', handleJoyEnd, { passive: false });
+  joystickContainer.addEventListener('touchcancel', handleJoyEnd, { passive: false });
+
+  driftButton.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    driftTouch = true;
+  }, { passive: false });
+  driftButton.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    driftTouch = false;
+  }, { passive: false });
+  driftButton.addEventListener('touchcancel', (e) => {
+    e.preventDefault();
+    driftTouch = false;
+  }, { passive: false });
+
+  // Camera
+  function getCamera() {
+    const camDist = 6;
+    const camHeight = 3;
+    const behindX = taxi.x - Math.sin(taxi.rotY) * camDist;
+    const behindZ = taxi.z - Math.cos(taxi.rotY) * camDist;
+    const eye = [behindX, taxi.y + camHeight, behindZ];
+    const center = [taxi.x, taxi.y, taxi.z];
+    const up = [0, 1, 0];
+    return lookAt(eye, center, up);
+  }
+
+  // Main loop
+  let lastTime = 0;
+  function loop(time) {
+    const dt = Math.min((time - lastTime) / 1000, 0.05);
+    lastTime = time;
+
+    update(dt);
+    render();
+
+    requestAnimationFrame(loop);
+  }
+
+  function update(dt) {
+    // Keyboard input
+    let forward = 0;
+    let turn = 0;
+
+    if (keys['w']) forward += 1;
+    if (keys['s']) forward -= 1;
+    if (keys['a']) turn += 1;
+    if (keys['d']) turn -= 1;
+
+    // Mobile joystick input (y is forward/back, x is left/right)
+    if (Math.abs(joyVector.y) > 0.1 || Math.abs(joyVector.x) > 0.1) {
+      forward += -joyVector.y; // up on screen = forward
+      turn += joyVector.x;
     }
 
-    function handleJoyStart(e) {
-      e.preventDefault();
-      joyActive = true;
-      const rect = joystickContainer.getBoundingClientRect();
-      joyCenter.x = rect.left + rect.width / 2;
-      joyCenter.y = rect.top + rect.height / 2;
-    }
+    const drifting = keys['shift'] || driftTouch;
 
-    function handleJoyMove(e) {
-      if (!joyActive) return;
-      e.preventDefault();
-      const touch = e.touches ? e.touches[0] : e;
-      const dx = touch.clientX - joyCenter.x;
-      const dy = touch.clientY - joyCenter.y;
-      const maxDist = 40;
-      const dist = Math.min(Math.sqrt(dx * dx + dy * dy), maxDist);
-      const angle = Math.atan2(dy, dx);
-      const x = Math.cos(angle) * dist;
-      const y = Math.sin(angle) * dist;
-      joystick.style.transform = `translate(${x}px, ${y}px)`;
-      joyVector.x = x / maxDist;
-      joyVector.y = y / maxDist;
-    }
+    // Movement physics
+    const accel = 8;
+    const maxSpeed = drifting ? 18 : 12;
+    const friction = drifting ? 1.5 : 3.0;
+    const turnSpeed = drifting ? 3.5 : 2.0;
 
-    function handleJoyEnd(e) {
-      e && e.preventDefault();
-      joyActive = false;
-      joyVector.x = 0;
-      joyVector.y = 0;
-      joystick.style.transform = 'translate(0px, 0px)';
-    }
+    taxi.speed += forward * accel * dt;
+    if (taxi.speed > maxSpeed) taxi.speed = maxSpeed;
+    if (taxi.speed < -maxSpeed * 0.5) taxi.speed = -maxSpeed * 0.5;
 
-    joystickContainer.addEventListener('touchstart', handleJoyStart);
-    joystickContainer.addEventListener('touchmove', handleJoyMove);
-    joystickContainer.addEventListener('touchend', handleJoyEnd);
-    joystickContainer.addEventListener('touchcancel', handleJoyEnd);
-
-    driftBtn.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-      driftTouch = true;
-    });
-    driftBtn.addEventListener('touchend', (e) => {
-      e.preventDefault();
-      driftTouch = false;
-    });
-
-    // Movement parameters
-    let velocity = 0;
-    let angle = 0;
-    const accel = 0.08;
-    const maxSpeed = 0.8;
-    const friction = 0.04;
-    const turnSpeed = 0.04;
-    const driftTurnMultiplier = 2.2;
-    const driftFrictionMultiplier = 0.3;
-
-    function updateMovement() {
-      let forward = 0;
-      let turn = 0;
-      let drifting = driftKey || driftTouch;
-
-      if (!isTouch) {
-        // PC controls: WASD
-        if (keys['KeyW']) forward += 1;
-        if (keys['KeyS']) forward -= 1;
-        if (keys['KeyA']) turn += 1;
-        if (keys['KeyD']) turn -= 1;
-      } else {
-        // Mobile: joystick
-        forward = -joyVector.y; // up on screen is negative y
-        turn = joyVector.x;
+    // friction
+    if (forward === 0) {
+      if (taxi.speed > 0) {
+        taxi.speed -= friction * dt;
+        if (taxi.speed < 0) taxi.speed = 0;
+      } else if (taxi.speed < 0) {
+        taxi.speed += friction * dt;
+        if (taxi.speed > 0) taxi.speed = 0;
       }
-
-      // Acceleration
-      if (forward !== 0) {
-        velocity += forward * accel;
-        if (velocity > maxSpeed) velocity = maxSpeed;
-        if (velocity < -maxSpeed * 0.6) velocity = -maxSpeed * 0.6;
-      } else {
-        // friction
-        const fr = drifting ? friction * driftFrictionMultiplier : friction;
-        if (velocity > 0) {
-          velocity = Math.max(0, velocity - fr);
-        } else if (velocity < 0) {
-          velocity = Math.min(0, velocity + fr);
-        }
-      }
-
-      // Turning
-      if (Math.abs(velocity) > 0.01 && turn !== 0) {
-        const turnMul = drifting ? driftTurnMultiplier : 1;
-        angle += turn * turnSpeed * turnMul * (velocity >= 0 ? 1 : -1);
-      }
-
-      // Apply movement
-      taxi.rotation.y = angle;
-      const dx = Math.sin(angle) * velocity;
-      const dz = Math.cos(angle) * velocity;
-      taxi.position.x += dx;
-      taxi.position.z += dz;
     }
 
-    function updateCamera() {
-      const camDist = 12;
-      const camHeight = 6;
-      const offsetX = Math.sin(angle) * -camDist;
-      const offsetZ = Math.cos(angle) * -camDist;
-      camera.position.set(
-        taxi.position.x + offsetX,
-        taxi.position.y + camHeight,
-        taxi.position.z + offsetZ
-      );
-      camera.lookAt(taxi.position.x, taxi.position.y + 1, taxi.position.z);
+    // turning
+    if (Math.abs(taxi.speed) > 0.1) {
+      taxi.rotY += turn * turnSpeed * dt * (taxi.speed >= 0 ? 1 : -1);
     }
 
-    function animate() {
-      requestAnimationFrame(animate);
-      updateMovement();
-      updateCamera();
-      renderer.render(scene, camera);
-    }
-    animate();
+    // position update
+    const dirX = Math.sin(taxi.rotY);
+    const dirZ = Math.cos(taxi.rotY);
+    taxi.x += dirX * taxi.speed * dt;
+    taxi.z += dirZ * taxi.speed * dt;
+  }
 
-    window.addEventListener('resize', () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
-  </script>
+  function render() {
+    gl.enable(gl.DEPTH_TEST);
+    gl.clearColor(0.05, 0.05, 0.08, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    const aspect = gl.drawingBufferWidth / gl.drawingBufferHeight;
+    const proj = perspective(Math.PI / 3, aspect, 0.1, 200.0);
+    const view = getCamera();
+
+    gl.uniformMatrix4fv(uProjection, false, proj);
+    gl.uniformMatrix4fv(uView, false, view);
+
+    // Draw ground as a big flat cube scaled
+    let model = identity();
+    model = translate(model, [0, -0.5, 0]);
+    model = scale(model, [100, 0.1, 100]);
+    drawCube(groundCube, model);
+
+    // Draw buildings
+    for (const b of buildings) {
+      let m = identity();
+      m = translate(m, [b.x, b.h / 2, b.z]);
+      m = scale(m, [4, b.h, 4]);
+      drawCube(buildingCube, m);
+    }
+
+    // Draw taxi (yellow rectangle-ish cube)
+    let taxiModel = identity();
+    taxiModel = translate(taxiModel, [taxi.x, taxi.y, taxi.z]);
+    taxiModel = rotateY(taxiModel, taxi.rotY);
+    taxiModel = scale(taxiModel, [1.5, 0.6, 3.0]); // stretched to look like a car
+    drawCube(taxiCube, taxiModel);
+  }
+
+  requestAnimationFrame(loop);
+})();
+</script>
 </body>
 </html>
