@@ -1,249 +1,281 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Raw WebGL Drift</title>
-<style>
-  html,body { margin:0; padding:0; overflow:hidden; background:#000; }
-  canvas { width:100vw; height:100vh; display:block; }
-  #hud {
-    position:fixed; top:10px; left:10px; color:white;
-    font-family:sans-serif; font-size:14px; text-shadow:0 0 4px black;
-  }
-</style>
+  <meta charset="UTF-8" />
+  <title>Taxi Boss Style 3D Demo</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #111;
+      font-family: sans-serif;
+    }
+    #info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: #fff;
+      background: rgba(0,0,0,0.5);
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-size: 13px;
+      z-index: 10;
+    }
+  </style>
 </head>
 <body>
-<canvas id="gl"></canvas>
-<div id="hud">W/S accelerate/brake • A/D steer • Space drift</div>
+<div id="info">
+  <strong>Taxi Boss Style 3D (Prototype)</strong><br>
+  W / A / S / D or Arrow Keys – drive<br>
+  Mouse drag – orbit camera<br>
+</div>
+
+<!-- Three.js CDN -->
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+
 <script>
-// ---------------- INPUT ----------------
-const keys = {};
-onkeydown = e => keys[e.key.toLowerCase()] = true;
-onkeyup   = e => keys[e.key.toLowerCase()] = false;
+  // === Basic setup ===
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x101018);
 
-// ---------------- WEBGL SETUP ----------------
-const canvas = document.getElementById("gl");
-const gl = canvas.getContext("webgl");
-function resize() {
-  canvas.width = innerWidth;
-  canvas.height = innerHeight;
-  gl.viewport(0,0,canvas.width,canvas.height);
-}
-resize();
-onresize = resize;
-
-// ---------------- SHADERS ----------------
-const vs = `
-attribute vec3 aPos;
-attribute vec3 aCol;
-uniform mat4 uMVP;
-varying vec3 vCol;
-void main(){
-  gl_Position = uMVP * vec4(aPos,1.0);
-  vCol = aCol;
-}`;
-const fs = `
-precision mediump float;
-varying vec3 vCol;
-void main(){ gl_FragColor = vec4(vCol,1.0); }`;
-
-function compile(type,src){
-  const s = gl.createShader(type);
-  gl.shaderSource(s,src);
-  gl.compileShader(s);
-  return s;
-}
-const prog = gl.createProgram();
-gl.attachShader(prog, compile(gl.VERTEX_SHADER,vs));
-gl.attachShader(prog, compile(gl.FRAGMENT_SHADER,fs));
-gl.linkProgram(prog);
-gl.useProgram(prog);
-
-const aPos = gl.getAttribLocation(prog,"aPos");
-const aCol = gl.getAttribLocation(prog,"aCol");
-const uMVP = gl.getUniformLocation(prog,"uMVP");
-
-// ---------------- GEOMETRY ----------------
-// Ground plane
-const ground = [];
-const G = 200;
-ground.push(
-  -G,0,-G, 0.1,0.1,0.1,
-   G,0,-G, 0.1,0.1,0.1,
-   G,0, G, 0.1,0.1,0.1,
-  -G,0,-G, 0.1,0.1,0.1,
-   G,0, G, 0.1,0.1,0.1,
-  -G,0, G, 0.1,0.1,0.1
-);
-
-// Car box
-const car = [];
-const w=0.7, l=1.3, h=0.4;
-function quad(x1,y1,z1, x2,y2,z2, x3,y3,z3, x4,y4,z4, r,g,b){
-  car.push(
-    x1,y1,z1,r,g,b, x2,y2,z2,r,g,b, x3,y3,z3,r,g,b,
-    x1,y1,z1,r,g,b, x3,y3,z3,r,g,b, x4,y4,z4,r,g,b
+  const camera = new THREE.PerspectiveCamera(
+    60,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    1000
   );
-}
-quad(-w,0,-l,  w,0,-l,  w,h,-l, -w,h,-l, 0.8,0.1,0.1);
-quad(-w,0, l,  w,0, l,  w,h, l, -w,h, l, 0.8,0.1,0.1);
-quad(-w,0,-l, -w,0, l, -w,h, l, -w,h,-l, 0.7,0,0);
-quad( w,0,-l,  w,0, l,  w,h, l,  w,h,-l, 0.7,0,0);
-quad(-w,h,-l,  w,h,-l,  w,h, l, -w,h, l, 0.9,0.2,0.2);
+  camera.position.set(0, 10, 20);
 
-function makeBuf(arr){
-  const b = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER,b);
-  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(arr),gl.STATIC_DRAW);
-  return b;
-}
-const groundBuf = makeBuf(ground);
-const carBuf = makeBuf(car);
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
 
-// ---------------- MATRIX UTILS ----------------
-function mul(a,b){
-  const o=new Float32Array(16);
-  for(let i=0;i<4;i++){
-    for(let j=0;j<4;j++){
-      o[i*4+j]=a[i*4+0]*b[j+0]+a[i*4+1]*b[j+4]+a[i*4+2]*b[j+8]+a[i*4+3]*b[j+12];
-    }
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.enablePan = false;
+  controls.maxPolarAngle = Math.PI / 2.1;
+  controls.target.set(0, 2, 0);
+
+  // === Lights ===
+  const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+  scene.add(ambient);
+
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  dirLight.position.set(10, 20, 10);
+  scene.add(dirLight);
+
+  // === Ground (road area) ===
+  const groundGeo = new THREE.PlaneGeometry(200, 200);
+  const groundMat = new THREE.MeshStandardMaterial({
+    color: 0x222222,
+    roughness: 0.9,
+    metalness: 0.1
+  });
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  // === Simple road grid ===
+  const roadMat = new THREE.MeshStandardMaterial({
+    color: 0x333333,
+    roughness: 0.8
+  });
+
+  function createRoad(x, z, w, h, rot) {
+    const geo = new THREE.PlaneGeometry(w, h);
+    const mesh = new THREE.Mesh(geo, roadMat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(x, 0.01, z);
+    if (rot) mesh.rotation.z = rot;
+    scene.add(mesh);
   }
-  return o;
-}
-function perspective(fov,asp,n,f){
-  const t=Math.tan(fov/2);
-  return new Float32Array([
-    1/(asp*t),0,0,0,
-    0,1/t,0,0,
-    0,0,(f+n)/(n-f),-1,
-    0,0,(2*f*n)/(n-f),0
-  ]);
-}
-function lookAt(ex,ey,ez, cx,cy,cz){
-  let zx=ex-cx, zy=ey-cy, zz=ez-cz;
-  let rl=1/Math.hypot(zx,zy,zz); zx*=rl; zy*=rl; zz*=rl;
-  let xx=0*zz-1*zy, xy=1*zx-0*zz, xz=0*zy-0*zx;
-  rl=1/Math.hypot(xx,xy,xz); xx*=rl; xy*=rl; xz*=rl;
-  let yx=zy*xz-zz*xx, yy=zz*xy-zx*xz, yz=zx*xx-zy*xy;
-  return new Float32Array([
-    xx, yx, zx, 0,
-    xy, yy, zy, 0,
-    xz, yz, zz, 0,
-    -(xx*ex+xy*ey+xz*ez),
-    -(yx*ex+yy*ey+yz*ez),
-    -(zx*ex+zy*ey+zz*ez),
-    1
-  ]);
-}
-function rotY(a){
-  const c=Math.cos(a), s=Math.sin(a);
-  return new Float32Array([
-    c,0,s,0,
-    0,1,0,0,
-   -s,0,c,0,
-    0,0,0,1
-  ]);
-}
-function trans(x,y,z){
-  return new Float32Array([
-    1,0,0,0,
-    0,1,0,0,
-    0,0,1,0,
-    x,y,z,1
-  ]);
-}
 
-// ---------------- PHYSICS ----------------
-let posX=0, posZ=0, yaw=0;
-let velX=0, velZ=0;
+  // A few long roads crossing like a simple city grid
+  createRoad(0, 0, 200, 12, 0);      // main horizontal
+  createRoad(0, 40, 200, 10, 0);
+  createRoad(0, -40, 200, 10, 0);
+  createRoad(0, 0, 200, 12, Math.PI / 2); // main vertical
+  createRoad(40, 0, 200, 10, Math.PI / 2);
+  createRoad(-40, 0, 200, 10, Math.PI / 2);
 
-const maxSpeed=40, accel=25, brake=40;
-const grip=4, driftGrip=1.2;
-const steer=2.5, friction=3;
+  // === Buildings ===
+  const buildingMat1 = new THREE.MeshStandardMaterial({ color: 0x4444aa });
+  const buildingMat2 = new THREE.MeshStandardMaterial({ color: 0xaa4444 });
+  const buildingMat3 = new THREE.MeshStandardMaterial({ color: 0x44aa44 });
 
-let last=performance.now();
+  function addBuilding(x, z, w, d, h, mat) {
+    const geo = new THREE.BoxGeometry(w, h, d);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, h / 2, z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+  }
 
-function update(dt){
-  const fwd = keys["w"]||keys["arrowup"];
-  const back= keys["s"]||keys["arrowdown"];
-  const left= keys["a"]||keys["arrowleft"];
-  const right=keys["d"]||keys["arrowright"];
-  const hb = keys[" "];
+  // Scatter some buildings around the roads
+  const mats = [buildingMat1, buildingMat2, buildingMat3];
+  for (let i = 0; i < 80; i++) {
+    const mat = mats[Math.floor(Math.random() * mats.length)];
+    const w = 4 + Math.random() * 8;
+    const d = 4 + Math.random() * 8;
+    const h = 6 + Math.random() * 20;
 
-  const fx=Math.sin(yaw), fz=Math.cos(yaw);
-  const vF = velX*fx + velZ*fz;
-  const vS = velX*fz - velZ*fx;
+    // keep them off the main roads a bit
+    let x = (Math.random() - 0.5) * 180;
+    let z = (Math.random() - 0.5) * 180;
+    if (Math.abs(x) < 12 || Math.abs(z) < 12) {
+      i--;
+      continue;
+    }
+    addBuilding(x, z, w, d, h, mat);
+  }
 
-  let sp=vF;
-  if(fwd) sp+=accel*dt;
-  if(back) sp-=brake*dt;
-  sp=Math.max(-maxSpeed*0.4, Math.min(maxSpeed,sp));
+  // === Taxi (player car) ===
+  const taxiGroup = new THREE.Group();
 
-  let st=0;
-  if(left) st+=1;
-  if(right) st-=1;
-  yaw += st*steer*dt*(sp/maxSpeed);
+  // Body
+  const bodyGeo = new THREE.BoxGeometry(2.2, 0.8, 4);
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0xffd000 });
+  const body = new THREE.Mesh(bodyGeo, bodyMat);
+  body.position.y = 0.8;
+  taxiGroup.add(body);
 
-  const g = hb? driftGrip : grip;
-  const newSide = vS*(1-g*dt);
+  // Roof
+  const roofGeo = new THREE.BoxGeometry(1.6, 0.6, 2.2);
+  const roofMat = new THREE.MeshStandardMaterial({ color: 0xfff6a0 });
+  const roof = new THREE.Mesh(roofGeo, roofMat);
+  roof.position.set(0, 1.3, -0.2);
+  taxiGroup.add(roof);
 
-  velX = fx*sp + fz*newSide;
-  velZ = fz*sp - fx*newSide;
+  // Wheels
+  const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.4, 16);
+  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
 
-  velX*=1-friction*dt*0.1;
-  velZ*=1-friction*dt*0.1;
+  function addWheel(x, z) {
+    const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+    wheel.rotation.z = Math.PI / 2;
+    wheel.position.set(x, 0.4, z);
+    taxiGroup.add(wheel);
+  }
 
-  posX+=velX*dt;
-  posZ+=velZ*dt;
+  addWheel(1.1, 1.4);
+  addWheel(-1.1, 1.4);
+  addWheel(1.1, -1.4);
+  addWheel(-1.1, -1.4);
 
-  if(posX>6){posX=6; velX*=-0.3;}
-  if(posX<-6){posX=-6; velX*=-0.3;}
+  taxiGroup.position.set(0, 0, 0);
+  scene.add(taxiGroup);
 
-  const L=150;
-  if(posZ>L) posZ-=L*2;
-  if(posZ<-L) posZ+=L*2;
-}
+  // === Movement ===
+  const keys = {
+    ArrowUp: false,
+    ArrowDown: false,
+    ArrowLeft: false,
+    ArrowRight: false,
+    KeyW: false,
+    KeyS: false,
+    KeyA: false,
+    KeyD: false
+  };
 
-// ---------------- RENDER ----------------
-function draw(buf,count,model){
-  const asp=canvas.width/canvas.height;
-  const P=perspective(Math.PI/3,asp,0.1,500);
-  const camDist=6, camH=3;
-  const cx=posX - Math.sin(yaw)*camDist;
-  const cy=camH;
-  const cz=posZ - Math.cos(yaw)*camDist;
-  const V=lookAt(cx,cy,cz, posX,0.5,posZ);
-  const VP=mul(P,V);
-  const MVP=mul(VP,model);
+  window.addEventListener("keydown", (e) => {
+    if (keys.hasOwnProperty(e.code)) {
+      keys[e.code] = true;
+    }
+  });
 
-  gl.uniformMatrix4fv(uMVP,false,MVP);
-  gl.bindBuffer(gl.ARRAY_BUFFER,buf);
-  gl.vertexAttribPointer(aPos,3,gl.FLOAT,false,24,0);
-  gl.vertexAttribPointer(aCol,3,gl.FLOAT,false,24,12);
-  gl.enableVertexAttribArray(aPos);
-  gl.enableVertexAttribArray(aCol);
-  gl.drawArrays(gl.TRIANGLES,0,count);
-}
+  window.addEventListener("keyup", (e) => {
+    if (keys.hasOwnProperty(e.code)) {
+      keys[e.code] = false;
+    }
+  });
 
-function loop(){
-  const now=performance.now();
-  const dt=Math.min(0.05,(now-last)/1000);
-  last=now;
+  let speed = 0;
+  let maxSpeed = 0.35;
+  let accel = 0.01;
+  let brake = 0.02;
+  let friction = 0.008;
+  let steerSpeed = 0.03;
 
-  update(dt);
+  // === Camera follow offset ===
+  const followOffset = new THREE.Vector3(0, 6, 10);
+  const cameraLerpFactor = 0.08;
 
-  gl.enable(gl.DEPTH_TEST);
-  gl.clearColor(0,0,0,1);
-  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  // === Animation loop ===
+  function animate() {
+    requestAnimationFrame(animate);
 
-  draw(groundBuf, ground.length/6, trans(0,0,0));
+    // Forward / backward
+    const forwardPressed = keys.ArrowUp || keys.KeyW;
+    const backwardPressed = keys.ArrowDown || keys.KeyS;
 
-  const M = mul(trans(posX,0,posZ), rotY(yaw));
-  draw(carBuf, car.length/6, M);
+    if (forwardPressed) {
+      speed += accel;
+    } else if (backwardPressed) {
+      speed -= accel;
+    } else {
+      // friction
+      if (speed > 0) {
+        speed -= friction;
+        if (speed < 0) speed = 0;
+      } else if (speed < 0) {
+        speed += friction;
+        if (speed > 0) speed = 0;
+      }
+    }
 
-  requestAnimationFrame(loop);
-}
-loop();
+    // Clamp speed
+    if (speed > maxSpeed) speed = maxSpeed;
+    if (speed < -maxSpeed * 0.6) speed = -maxSpeed * 0.6;
+
+    // Steering
+    const leftPressed = keys.ArrowLeft || keys.KeyA;
+    const rightPressed = keys.ArrowRight || keys.KeyD;
+
+    if (leftPressed && speed !== 0) {
+      taxiGroup.rotation.y += steerSpeed * (speed > 0 ? 1 : -1);
+    }
+    if (rightPressed && speed !== 0) {
+      taxiGroup.rotation.y -= steerSpeed * (speed > 0 ? 1 : -1);
+    }
+
+    // Move taxi forward in its local direction
+    const forward = new THREE.Vector3(0, 0, -1);
+    forward.applyQuaternion(taxiGroup.quaternion);
+    taxiGroup.position.addScaledVector(forward, speed);
+
+    // Keep taxi roughly within bounds
+    taxiGroup.position.x = THREE.MathUtils.clamp(taxiGroup.position.x, -95, 95);
+    taxiGroup.position.z = THREE.MathUtils.clamp(taxiGroup.position.z, -95, 95);
+
+    // Camera follow
+    const desiredPosition = taxiGroup.position
+      .clone()
+      .add(
+        followOffset
+          .clone()
+          .applyAxisAngle(new THREE.Vector3(0, 1, 0), taxiGroup.rotation.y)
+      );
+
+    camera.position.lerp(desiredPosition, cameraLerpFactor);
+    controls.target.lerp(taxiGroup.position.clone().add(new THREE.Vector3(0, 1.5, 0)), 0.15);
+    controls.update();
+
+    renderer.render(scene, camera);
+  }
+
+  animate();
+
+  // === Resize handling ===
+  window.addEventListener("resize", () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
 </script>
 </body>
 </html>
