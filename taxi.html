@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Dark City Taxi Drift</title>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no" />
+<link rel="icon" href="data:,">
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #020308;
+    overflow: hidden;
+    touch-action: none;
+  }
+  canvas {
+    display: block;
+    background: radial-gradient(circle at top, #0d0f16 0%, #05060b 45%, #020308 100%);
+  }
+
+  #joystickContainer, #driftButton {
+    position: fixed;
+    z-index: 10;
+    touch-action: none;
+  }
+
+  #joystickContainer {
+    left: 10px;
+    bottom: 10px;
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    border: 2px solid #444;
+    background: rgba(0,0,0,0.4);
+    display: none;
+  }
+  #joystick {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 60px;
+    height: 60px;
+    margin-left: -30px;
+    margin-top: -30px;
+    border-radius: 50%;
+    background: rgba(200,200,200,0.25);
+  }
+
+  #driftButton {
+    right: 10px;
+    bottom: 30px;
+    width: 90px;
+    height: 90px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,230,0,0.35), rgba(80,60,0,0.9));
+    border: 2px solid #c9a800;
+    color: #fff;
+    font-weight: bold;
+    font-family: sans-serif;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    text-shadow: 0 0 6px #000;
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="joystickContainer">
+  <div id="joystick"></div>
+</div>
+<div id="driftButton">DRIFT</div>
+
+<script>
+(function() {
+  const canvas = document.getElementById('game');
+  const gl = canvas.getContext('webgl', { antialias: true });
+
+  function resize() {
+    canvas.width = innerWidth;
+    canvas.height = innerHeight;
+    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+  }
+  addEventListener('resize', resize);
+  resize();
+
+  // MOBILE DETECTION
+  const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile/i.test(navigator.userAgent);
+  const joyC = document.getElementById('joystickContainer');
+  const joy = document.getElementById('joystick');
+  const driftBtn = document.getElementById('driftButton');
+  if (isMobile) {
+    joyC.style.display = 'block';
+    driftBtn.style.display = 'flex';
+  }
+
+  // SHADERS (dark lighting)
+  const vsSrc = `
+    attribute vec3 aPosition;
+    attribute vec3 aNormal;
+    attribute vec3 aColor;
+    uniform mat4 uProjection;
+    uniform mat4 uView;
+    uniform mat4 uModel;
+    uniform vec3 uLightDir;
+    uniform vec3 uAmbient;
+    varying vec3 vColor;
+    void main() {
+      vec3 n = normalize(mat3(uModel) * aNormal);
+      float diff = max(dot(-uLightDir, n), 0.0);
+      vec3 lit = aColor * (uAmbient + diff * 0.9);
+      vColor = lit;
+      gl_Position = uProjection * uView * uModel * vec4(aPosition, 1.0);
+    }
+  `;
+  const fsSrc = `
+    precision mediump float;
+    varying vec3 vColor;
+    void main() {
+      gl_FragColor = vec4(vColor, 1.0);
+    }
+  `;
+
+  function compile(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    return s;
+  }
+
+  const vs = compile(gl.VERTEX_SHADER, vsSrc);
+  const fs = compile(gl.FRAGMENT_SHADER, fsSrc);
+  const prog = gl.createProgram();
+  gl.attachShader(prog, vs);
+  gl.attachShader(prog, fs);
+  gl.linkProgram(prog);
+  gl.useProgram(prog);
+
+  const aPos = gl.getAttribLocation(prog, "aPosition");
+  const aNorm = gl.getAttribLocation(prog, "aNormal");
+  const aCol = gl.getAttribLocation(prog, "aColor");
+  const uProj = gl.getUniformLocation(prog, "uProjection");
+  const uView = gl.getUniformLocation(prog, "uView");
+  const uModel = gl.getUniformLocation(prog, "uModel");
+  const uLight = gl.getUniformLocation(prog, "uLightDir");
+  const uAmb = gl.getUniformLocation(prog, "uAmbient");
+
+  // MATRIX HELPERS
+  function I() { const m=new Float32Array(16); m[0]=m[5]=m[10]=m[15]=1; return m; }
+  function T(m,[x,y,z]){m=m.slice(0);m[12]+=x;m[13]+=y;m[14]+=z;return m;}
+  function S(m,[x,y,z]){m=m.slice(0);m[0]*=x;m[5]*=y;m[10]*=z;return m;}
+  function RY(m,r){
+    const c=Math.cos(r),s=Math.sin(r),o=m.slice(0);
+    o[0]=c; o[2]=s; o[8]=-s; o[10]=c; return o;
+  }
+  function persp(fov,a,n,f){
+    const t=1/Math.tan(fov/2),o=new Float32Array(16);
+    o[0]=t/a; o[5]=t; o[10]=(f+n)/(n-f); o[11]=-1; o[14]=(2*f*n)/(n-f);
+    return o;
+  }
+  function lookAt(e,c,u){
+    let [ex,ey,ez]=e,[cx,cy,cz]=c,[ux,uy,uz]=u;
+    let zx=ex-cx,zy=ey-cy,zz=ez-cz,l=Math.hypot(zx,zy,zz);
+    zx/=l;zy/=l;zz/=l;
+    let xx=uy*zz-uz*zy,xy=uz*zx-ux*zz,xz=ux*zy-uy*zx;
+    l=Math.hypot(xx,xy,xz);xx/=l;xy/=l;xz/=l;
+    let yx=zy*xz-zz*xy,yy=zz*xx-zx*xz,yz=zx*xy-zy*xx;
+    l=Math.hypot(yx,yy,yz);yx/=l;yy/=l;yz/=l;
+    const m=new Float32Array(16);
+    m[0]=xx;m[1]=yx;m[2]=zx;m[3]=0;
+    m[4]=xy;m[5]=yy;m[6]=zy;m[7]=0;
+    m[8]=xz;m[9]=yz;m[10]=zz;m[11]=0;
+    m[12]=-(xx*ex+xy*ey+xz*ez);
+    m[13]=-(yx*ex+yy*ey+yz*ez);
+    m[14]=-(zx*ex+zy*ey+zz*ez);
+    m[15]=1;
+    return m;
+  }
+
+  // CUBE
+  function cube(size,color){
+    const s=size/2,[r,g,b]=color,p=[],n=[],c=[];
+    function face(nx,ny,nz,v){
+      for(let i=0;i<6;i++){n.push(nx,ny,nz);c.push(r,g,b);}
+      p.push(...v);
+    }
+    face(0,0,1,[-s,-s,s, s,-s,s, s,s,s, -s,-s,s, s,s,s, -s,s,s]);
+    face(0,0,-1,[ s,-s,-s,-s,-s,-s,-s,s,-s, s,-s,-s,-s,s,-s, s,s,-s]);
+    face(-1,0,0,[-s,-s,-s,-s,-s,s,-s,s,s, -s,-s,-s,-s,s,s,-s,s,-s]);
+    face(1,0,0,[ s,-s,s, s,-s,-s, s,s,-s, s,-s,s, s,s,-s, s,s,s]);
+    face(0,1,0,[-s,s,s, s,s,s, s,s,-s, -s,s,s, s,s,-s, -s,s,-s]);
+    face(0,-1,0,[-s,-s,-s, s,-s,-s, s,-s,s, -s,-s,-s, s,-s,s, -s,-s,s]);
+    return {
+      pos:new Float32Array(p),
+      norm:new Float32Array(n),
+      col:new Float32Array(c)
+    };
+  }
+
+  const taxiCube = cube(1,[0.95,0.85,0.1]);
+  const buildingCube = cube(1,[0.08,0.12,0.2]);
+  const groundCube = cube(1,[0.03,0.03,0.05]);
+
+  const bufP=gl.createBuffer(),bufN=gl.createBuffer(),bufC=gl.createBuffer();
+  function draw(c,m){
+    gl.bindBuffer(gl.ARRAY_BUFFER,bufP);
+    gl.bufferData(gl.ARRAY_BUFFER,c.pos,gl.STATIC_DRAW);
+    gl.vertexAttribPointer(aPos,3,gl.FLOAT,false,0,0);
+    gl.enableVertexAttribArray(aPos);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER,bufN);
+    gl.bufferData(gl.ARRAY_BUFFER,c.norm,gl.STATIC_DRAW);
+    gl.vertexAttribPointer(aNorm,3,gl.FLOAT,false,0,0);
+    gl.enableVertexAttribArray(aNorm);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER,bufC);
+    gl.bufferData(gl.ARRAY_BUFFER,c.col,gl.STATIC_DRAW);
+    gl.vertexAttribPointer(aCol,3,gl.FLOAT,false,0,0);
+    gl.enableVertexAttribArray(aCol);
+
+    gl.uniformMatrix4fv(uModel,false,m);
+    gl.drawArrays(gl.TRIANGLES,0,c.pos.length/3);
+  }
+
+  // BUILDINGS
+  const buildings=[];
+  for(let i=0;i<90;i++){
+    const ring=40+Math.random()*120;
+    const ang=Math.random()*Math.PI*2;
+    const x=Math.cos(ang)*ring;
+    const z=Math.sin(ang)*ring;
+    const h=25+Math.random()*55;
+    buildings.push({x,z,h});
+  }
+
+  // TAXI PHYSICS
+  let taxi={x:0,y:0.5,z:0,heading:0,vx:0,vz:0};
+
+  const keys={};
+  addEventListener("keydown",e=>{keys[e.key.toLowerCase()]=true;});
+  addEventListener("keyup",e=>{keys[e.key.toLowerCase()]=false;});
+
+  // MOBILE JOYSTICK
+  let joyActive=false,joyCenter={x:0,y:0},joyVec={x:0,y:0},driftTouch=false;
+
+  function joyStart(e){
+    e.preventDefault();
+    joyActive=true;
+    const r=joyC.getBoundingClientRect();
+    joyCenter.x=r.left+r.width/2;
+    joyCenter.y=r.top+r.height/2;
+    joyMove(e.touches[0].clientX,e.touches[0].clientY);
+  }
+  function joyMove(x,y){
+    const dx=x-joyCenter.x,dy=y-joyCenter.y,max=50;
+    let d=Math.hypot(dx,dy),nx=dx,ny=dy;
+    if(d>max){nx=dx*max/d;ny=dy*max/d;}
+    joyVec.x=nx/max; joyVec.y=ny/max;
+    joy.style.transform=`translate(calc(-50% + ${nx}px), calc(-50% + ${ny}px))`;
+  }
+  function joyEnd(e){
+    if(e)e.preventDefault();
+    joyActive=false;
+    joyVec.x=0; joyVec.y=0;
+    joy.style.transform='translate(-50%,-50%)';
+  }
+
+  if(isMobile){
+    joyC.addEventListener("touchstart",joyStart,{passive:false});
+    joyC.addEventListener("touchmove",e=>{e.preventDefault();joyMove(e.touches[0].clientX,e.touches[0].clientY);},{passive:false});
+    joyC.addEventListener("touchend",joyEnd,{passive:false});
+    joyC.addEventListener("touchcancel",joyEnd,{passive:false});
+
+    driftBtn.addEventListener("touchstart",e=>{e.preventDefault();driftTouch=true;},{passive:false});
+    driftBtn.addEventListener("touchend",e=>{e.preventDefault();driftTouch=false;},{passive:false});
+  }
+
+  // CAMERA
+  let camX=-8,camY=5,camZ=-8;
+
+  function update(dt){
+    let f=0,s=0;
+    if(keys['w'])f+=1;
+    if(keys['s'])f-=1;
+    if(keys['a'])s+=1;
+    if(keys['d'])s-=1;
+
+    if(isMobile){
+      f+=-joyVec.y;
+      s+=joyVec.x;
+    }
+
+    const drifting=keys['shift']||driftTouch;
+
+    const accel=22, friction=1.8, drag=0.35, maxSpeed=28;
+    const baseTurn=3.8, driftTurn=1.4;
+    const grip= drifting?0.05:0.22;
+
+    const fd={x:Math.sin(taxi.heading),z:Math.cos(taxi.heading)};
+    const rd={x:Math.cos(taxi.heading),z:-Math.sin(taxi.heading)};
+
+    // accelerate
+    taxi.vx+=fd.x*accel*f*dt;
+    taxi.vz+=fd.z*accel*f*dt;
+
+    // friction + drag
+    taxi.vx*=1-drag*dt;
+    taxi.vz*=1-drag*dt;
+
+    let sp=Math.hypot(taxi.vx,taxi.vz);
+    if(sp>0){
+      const ns=Math.max(sp-friction*dt,0);
+      const sc=ns/sp;
+      taxi.vx*=sc; taxi.vz*=sc;
+    }
+
+    // clamp
+    sp=Math.hypot(taxi.vx,taxi.vz);
+    if(sp>maxSpeed){
+      const sc=maxSpeed/sp;
+      taxi.vx*=sc; taxi.vz*=sc;
+      sp=maxSpeed;
+    }
+
+    // steering
+    const sf=Math.min(sp/10,1);
+    let turn=baseTurn+(drifting?driftTurn:0);
+    taxi.heading+=s*turn*sf*dt*(sp>=0?1:-1);
+
+    // drift alignment
+    if(sp>0.1){
+      const vd={x:taxi.vx/sp,z:taxi.vz/sp};
+      const td={
+        x:vd.x*(1-grip)+fd.x*grip,
+        z:vd.z*(1-grip)+fd.z*grip
+      };
+      const l=Math.hypot(td.x,td.z)||1;
+      taxi.vx=(td.x/l)*sp;
+      taxi.vz=(td.z/l)*sp;
+    }
+
+    // drift kick
+    if(drifting && f>0.2 && sp>6){
+      const k=12*dt*(Math.random()>0.5?1:-1);
+      taxi.vx+=rd.x*k;
+      taxi.vz+=rd.z*k;
+    }
+
+    // integrate
+    taxi.x+=taxi.vx*dt;
+    taxi.z+=taxi.vz*dt;
+
+    // CAMERA FOLLOWS VELOCITY DIRECTION (THE FIX)
+    const vsp=Math.hypot(taxi.vx,taxi.vz);
+    let camDir = vsp>0.1 ? {x:taxi.vx/vsp, z:taxi.vz/vsp} : fd;
+
+    const dist=9, h=4.2;
+    const tx=taxi.x - camDir.x*dist;
+    const tz=taxi.z - camDir.z*dist;
+    const ty=taxi.y + h;
+
+    const L=(a,b,t)=>a+(b-a)*t;
+    camX=L(camX,tx,0.09);
+    camY=L(camY,ty,0.09);
+    camZ=L(camZ,tz,0.09);
+  }
+
+  function render(){
+    gl.enable(gl.DEPTH_TEST);
+    gl.clearColor(0.01,0.01,0.02,1);
+    gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+
+    const asp=gl.drawingBufferWidth/gl.drawingBufferHeight;
+    const proj=persp(Math.PI/3,asp,0.1,
