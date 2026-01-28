@@ -1,452 +1,265 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <title>3D Taxi City Drift</title>
-  <style>
+<meta charset="UTF-8">
+<title>Pure CSS 3D Taxi Drift</title>
+<style>
     html, body {
-      margin: 0;
-      padding: 0;
-      overflow: hidden;
-      background: #000;
-      touch-action: none;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background: #111;
+        touch-action: none;
     }
-    #info {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      color: #fff;
-      font-family: sans-serif;
-      font-size: 14px;
-      z-index: 10;
-      background: rgba(0,0,0,0.4);
-      padding: 6px 10px;
-      border-radius: 4px;
+
+    #camera {
+        width: 100vw;
+        height: 100vh;
+        perspective: 900px;
+        overflow: hidden;
+        position: relative;
     }
-    #mobileControls {
-      position: absolute;
-      left: 10px;
-      bottom: 10px;
-      width: 160px;
-      height: 160px;
-      border-radius: 50%;
-      border: 2px solid rgba(255,255,255,0.4);
-      box-sizing: border-box;
-      z-index: 20;
-      display: none;
-      touch-action: none;
+
+    #world {
+        width: 1px;
+        height: 1px;
+        transform-style: preserve-3d;
+        position: absolute;
+        left: 50%;
+        top: 50%;
     }
-    #joystickThumb {
-      position: absolute;
-      width: 60px;
-      height: 60px;
-      border-radius: 50%;
-      background: rgba(255,255,255,0.4);
-      left: 50%;
-      top: 50%;
-      transform: translate(-50%, -50%);
-      pointer-events: none;
+
+    .road {
+        position: absolute;
+        width: 2000px;
+        height: 40px;
+        background: #333;
+        transform-style: preserve-3d;
     }
-    #driftButton {
-      position: absolute;
-      right: 20px;
-      bottom: 30px;
-      width: 80px;
-      height: 80px;
-      border-radius: 50%;
-      background: rgba(255,255,255,0.2);
-      border: 2px solid rgba(255,255,255,0.6);
-      color: #fff;
-      font-family: sans-serif;
-      font-size: 14px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 20;
-      display: none;
-      touch-action: none;
+
+    .building {
+        position: absolute;
+        width: 80px;
+        height: 80px;
+        background: #555;
+        transform-style: preserve-3d;
     }
-  </style>
+
+    #taxi {
+        width: 40px;
+        height: 80px;
+        background: yellow;
+        position: absolute;
+        transform-style: preserve-3d;
+    }
+
+    .skid {
+        width: 6px;
+        height: 20px;
+        background: rgba(0,0,0,0.6);
+        position: absolute;
+        transform-style: preserve-3d;
+    }
+
+    /* Mobile controls */
+    #joystick {
+        position: absolute;
+        left: 20px;
+        bottom: 20px;
+        width: 150px;
+        height: 150px;
+        border-radius: 50%;
+        border: 2px solid #fff5;
+        display: none;
+    }
+
+    #thumb {
+        width: 60px;
+        height: 60px;
+        background: #fff5;
+        border-radius: 50%;
+        position: absolute;
+        left: 45px;
+        top: 45px;
+    }
+
+    #driftBtn {
+        position: absolute;
+        right: 20px;
+        bottom: 40px;
+        width: 90px;
+        height: 90px;
+        border-radius: 50%;
+        background: #fff3;
+        border: 2px solid #fff7;
+        color: white;
+        font-size: 20px;
+        display: none;
+        justify-content: center;
+        align-items: center;
+    }
+</style>
 </head>
 <body>
-<div id="info">
-  <b>3D Taxi City Drift</b><br>
-  <span id="pcHelp">W/S = accel/brake, A/D = steer, Space = drift</span>
-  <span id="mobileHelp" style="display:none;">Use joystick to drive, DRIFT button to slide</span>
+
+<div id="camera">
+    <div id="world"></div>
 </div>
 
-<div id="mobileControls">
-  <div id="joystickThumb"></div>
-</div>
-<div id="driftButton">DRIFT</div>
+<div id="joystick"><div id="thumb"></div></div>
+<div id="driftBtn">DRIFT</div>
 
-<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
 <script>
-  // --- Device detection ---
-  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const world = document.getElementById("world");
 
-  const mobileControls = document.getElementById("mobileControls");
-  const joystickThumb = document.getElementById("joystickThumb");
-  const driftButton = document.getElementById("driftButton");
-  const pcHelp = document.getElementById("pcHelp");
-  const mobileHelp = document.getElementById("mobileHelp");
+// --- CITY LAYOUT ---
+for (let i = -5; i <= 5; i++) {
+    let road = document.createElement("div");
+    road.className = "road";
+    road.style.transform = `translateX(-1000px) translateZ(${i*200}px) rotateX(90deg)`;
+    world.appendChild(road);
 
-  if (isMobile) {
-    mobileControls.style.display = "block";
-    driftButton.style.display = "flex";
-    pcHelp.style.display = "none";
-    mobileHelp.style.display = "inline";
-  }
+    road = document.createElement("div");
+    road.className = "road";
+    road.style.transform = `translateZ(-1000px) translateX(${i*200}px) rotateX(90deg) rotateZ(90deg)`;
+    world.appendChild(road);
+}
 
-  // --- Three.js setup ---
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x202030);
-
-  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 3000);
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  document.body.appendChild(renderer.domElement);
-
-  scene.add(new THREE.AmbientLight(0xffffff, 0.4));
-  const dir = new THREE.DirectionalLight(0xffffff, 0.8);
-  dir.position.set(40, 80, 20);
-  scene.add(dir);
-
-  // --- Ground & city layout ---
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(3000, 3000),
-    new THREE.MeshStandardMaterial({ color: 0x222222 })
-  );
-  ground.rotation.x = -Math.PI / 2;
-  scene.add(ground);
-
-  // Roads: grid of wide stripes
-  const roadMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
-  const roadWidth = 18;
-  const blockSize = 80; // distance between road centers
-
-  for (let i = -8; i <= 8; i++) {
-    // vertical roads (along Z)
-    const vRoad = new THREE.Mesh(
-      new THREE.PlaneGeometry(roadWidth, 3000),
-      roadMat
-    );
-    vRoad.rotation.x = -Math.PI / 2;
-    vRoad.position.x = i * blockSize;
-    scene.add(vRoad);
-
-    // horizontal roads (along X)
-    const hRoad = new THREE.Mesh(
-      new THREE.PlaneGeometry(3000, roadWidth),
-      roadMat
-    );
-    hRoad.rotation.x = -Math.PI / 2;
-    hRoad.position.z = i * blockSize;
-    scene.add(hRoad);
-  }
-
-  // Buildings in blocks between roads
-  const buildingGeo = new THREE.BoxGeometry(16, 20, 16);
-  const buildingMat = new THREE.MeshStandardMaterial({ color: 0x505070 });
-
-  for (let i = -7; i <= 7; i++) {
-    for (let j = -7; j <= 7; j++) {
-      // skip near center for spawn area
-      if (Math.abs(i) < 2 && Math.abs(j) < 2) continue;
-
-      const centerX = i * blockSize;
-      const centerZ = j * blockSize;
-
-      // four buildings per block, offset from center
-      const offsets = [
-        [-20, -20],
-        [20, -20],
-        [-20, 20],
-        [20, 20]
-      ];
-
-      offsets.forEach(([ox, oz]) => {
-        const hMult = 0.7 + Math.random() * 2.5;
-        const b = new THREE.Mesh(
-          buildingGeo.clone().scale(1, hMult, 1),
-          buildingMat
-        );
-        b.position.set(centerX + ox, 10 * hMult, centerZ + oz);
-        scene.add(b);
-      });
+// Buildings
+for (let x = -5; x <= 5; x++) {
+    for (let z = -5; z <= 5; z++) {
+        if (Math.abs(x) < 2 && Math.abs(z) < 2) continue;
+        const b = document.createElement("div");
+        b.className = "building";
+        b.style.transform = `translateX(${x*200}px) translateZ(${z*200}px) translateY(-80px)`;
+        world.appendChild(b);
     }
-  }
+}
 
-  // --- Taxi model ---
-  const taxi = new THREE.Group();
+// --- TAXI ---
+const taxi = document.createElement("div");
+taxi.id = "taxi";
+world.appendChild(taxi);
 
-  const body = new THREE.Mesh(
-    new THREE.BoxGeometry(4, 1.2, 8),
-    new THREE.MeshStandardMaterial({ color: 0xffd000 })
-  );
-  body.position.y = 1;
-  taxi.add(body);
+// --- PHYSICS ---
+let posX = 0, posZ = 0, rotY = 0;
+let speed = 0, steering = 0;
+let velX = 0, velZ = 0;
 
-  const roof = new THREE.Mesh(
-    new THREE.BoxGeometry(3, 1, 3.5),
-    new THREE.MeshStandardMaterial({ color: 0xfff5a0 })
-  );
-  roof.position.set(0, 1.8, -0.5);
-  taxi.add(roof);
+const accel = 0.4;
+const friction = 0.1;
+const steerSpeed = 2;
+const driftFactor = 0.15;
+const grip = 0.85;
 
-  const sign = new THREE.Mesh(
-    new THREE.BoxGeometry(1.5, 0.4, 0.8),
-    new THREE.MeshStandardMaterial({ color: 0x000000 })
-  );
-  sign.position.set(0, 2.4, -0.5);
-  taxi.add(sign);
+// --- INPUT ---
+const keys = { w:0, s:0, a:0, d:0, drift:0 };
 
-  const wheelGeo = new THREE.CylinderGeometry(0.6, 0.6, 0.4, 16);
-  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+document.addEventListener("keydown", e => {
+    if (e.key === "w") keys.w = 1;
+    if (e.key === "s") keys.s = 1;
+    if (e.key === "a") keys.a = 1;
+    if (e.key === "d") keys.d = 1;
+    if (e.key === " ") keys.drift = 1;
+});
+document.addEventListener("keyup", e => {
+    if (e.key === "w") keys.w = 0;
+    if (e.key === "s") keys.s = 0;
+    if (e.key === "a") keys.a = 0;
+    if (e.key === "d") keys.d = 0;
+    if (e.key === " ") keys.drift = 0;
+});
 
-  function wheel(x, z) {
-    const w = new THREE.Mesh(wheelGeo, wheelMat);
-    w.rotation.z = Math.PI / 2;
-    w.position.set(x, 0.5, z);
-    taxi.add(w);
-    return w;
-  }
+// --- MOBILE DETECTION ---
+const isMobile = /Mobi|Android|iPhone/i.test(navigator.userAgent);
+const joy = document.getElementById("joystick");
+const thumb = document.getElementById("thumb");
+const driftBtn = document.getElementById("driftBtn");
 
-  const wFL = wheel(-1.5, -2.5);
-  const wFR = wheel(1.5, -2.5);
-  const wRL = wheel(-1.5, 2.5);
-  const wRR = wheel(1.5, 2.5);
+let joyX = 0, joyY = 0;
 
-  taxi.position.set(0, 0, 0);
-  scene.add(taxi);
+if (isMobile) {
+    joy.style.display = "block";
+    driftBtn.style.display = "flex";
 
-  // --- Skid marks ---
-  const skidGroup = new THREE.Group();
-  scene.add(skidGroup);
-  const skidMat = new THREE.MeshBasicMaterial({
-    color: 0x000000,
-    transparent: true,
-    opacity: 0.5
-  });
-  const skidGeo = new THREE.PlaneGeometry(0.4, 1.5);
-  const maxSkids = 400;
-  const skidPool = [];
+    joy.addEventListener("touchmove", e => {
+        const t = e.touches[0];
+        const rect = joy.getBoundingClientRect();
+        const cx = rect.left + rect.width/2;
+        const cy = rect.top + rect.height/2;
 
-  function addSkidAt(pos, dir) {
-    let skid;
-    if (skidPool.length < maxSkids) {
-      skid = new THREE.Mesh(skidGeo, skidMat);
-      skid.rotation.x = -Math.PI / 2;
-      skidGroup.add(skid);
-      skidPool.push(skid);
-    } else {
-      skid = skidPool.shift();
-      skidPool.push(skid);
-    }
-    skid.position.copy(pos);
-    const angle = Math.atan2(dir.x, dir.z);
-    skid.rotation.y = angle;
-  }
+        joyX = (t.clientX - cx) / 60;
+        joyY = (t.clientY - cy) / 60;
 
-  // --- Physics & controls ---
-  let speed = 0;
-  let steering = 0;
-  const maxSpeed = 0.7;
-  const accel = 0.012;
-  const friction = 0.006;
-  const steeringSpeed = 0.035;
-  const maxSteer = 0.045;
+        joyX = Math.max(-1, Math.min(1, joyX));
+        joyY = Math.max(-1, Math.min(1, joyY));
 
-  let vel = new THREE.Vector3(0, 0, 0);
-  const driftFactor = 0.08;
-  const grip = 0.9;
-
-  const keys = { w:0, s:0, a:0, d:0, space:0 };
-
-  if (!isMobile) {
-    window.addEventListener("keydown", e => {
-      if (e.code === "KeyW") keys.w = 1;
-      if (e.code === "KeyS") keys.s = 1;
-      if (e.code === "KeyA") keys.a = 1;
-      if (e.code === "KeyD") keys.d = 1;
-      if (e.code === "Space") keys.space = 1;
+        thumb.style.left = (45 + joyX*40) + "px";
+        thumb.style.top  = (45 + joyY*40) + "px";
     });
-    window.addEventListener("keyup", e => {
-      if (e.code === "KeyW") keys.w = 0;
-      if (e.code === "KeyS") keys.s = 0;
-      if (e.code === "KeyA") keys.a = 0;
-      if (e.code === "KeyD") keys.d = 0;
-      if (e.code === "Space") keys.space = 0;
+
+    joy.addEventListener("touchend", () => {
+        joyX = joyY = 0;
+        thumb.style.left = "45px";
+        thumb.style.top = "45px";
     });
-  }
 
-  // --- Mobile joystick & drift button ---
-  let joyActive = false;
-  let joyCenter = { x: 0, y: 0 };
-  let joyVec = { x: 0, y: 0 };
+    driftBtn.addEventListener("touchstart", () => keys.drift = 1);
+    driftBtn.addEventListener("touchend", () => keys.drift = 0);
+}
 
-  if (isMobile) {
-    const rect = mobileControls.getBoundingClientRect();
-    joyCenter.x = rect.left + rect.width / 2;
-    joyCenter.y = rect.top + rect.height / 2;
+// --- SKID MARKS ---
+function addSkid(x, z, angle) {
+    const s = document.createElement("div");
+    s.className = "skid";
+    s.style.transform =
+        `translateX(${x}px) translateZ(${z}px) rotateY(${angle}deg)`;
+    world.appendChild(s);
+    setTimeout(() => s.remove(), 2000);
+}
 
-    function updateJoystickPos(x, y) {
-      const dx = x - joyCenter.x;
-      const dy = y - joyCenter.y;
-      const maxR = rect.width / 2 - 20;
-      const dist = Math.sqrt(dx*dx + dy*dy) || 1;
-      const clamped = Math.min(dist, maxR);
-      const nx = dx / dist;
-      const ny = dy / dist;
-      joystickThumb.style.left = (50 + (clamped * nx) / (rect.width / 2) * 50) + "%";
-      joystickThumb.style.top  = (50 + (clamped * ny) / (rect.height / 2) * 50) + "%";
-      joyVec.x = clamped / maxR * nx;
-      joyVec.y = clamped / maxR * ny;
-    }
+// --- GAME LOOP ---
+function loop() {
+    // Input mapping
+    const forward = isMobile ? -joyY : (keys.w - keys.s);
+    const turn = isMobile ? joyX : (keys.a - keys.d);
 
-    function resetJoystick() {
-      joystickThumb.style.left = "50%";
-      joystickThumb.style.top = "50%";
-      joyVec.x = 0;
-      joyVec.y = 0;
-    }
-
-    mobileControls.addEventListener("touchstart", e => {
-      e.preventDefault();
-      joyActive = true;
-      const t = e.touches[0];
-      updateJoystickPos(t.clientX, t.clientY);
-    }, { passive: false });
-
-    mobileControls.addEventListener("touchmove", e => {
-      e.preventDefault();
-      if (!joyActive) return;
-      const t = e.touches[0];
-      updateJoystickPos(t.clientX, t.clientY);
-    }, { passive: false });
-
-    mobileControls.addEventListener("touchend", e => {
-      e.preventDefault();
-      joyActive = false;
-      resetJoystick();
-    }, { passive: false });
-
-    driftButton.addEventListener("touchstart", e => {
-      e.preventDefault();
-      keys.space = 1;
-    }, { passive: false });
-
-    driftButton.addEventListener("touchend", e => {
-      e.preventDefault();
-      keys.space = 0;
-    }, { passive: false });
-  }
-
-  // --- Camera follow ---
-  function updateCamera() {
-    const offset = new THREE.Vector3(0, 7, 14).applyQuaternion(taxi.quaternion);
-    const target = taxi.position.clone().add(offset);
-    camera.position.lerp(target, 0.15);
-    camera.lookAt(taxi.position.clone().add(new THREE.Vector3(0, 2, 0)));
-  }
-
-  // --- Main loop ---
-  let last = performance.now();
-  function animate(now) {
-    requestAnimationFrame(animate);
-    const dt = (now - last) / 16.67;
-    last = now;
-
-    // Map mobile joystick to keys-like intent
-    if (isMobile) {
-      // joyVec.y: up negative, down positive (screen coords)
-      const forwardInput = -joyVec.y; // up = accelerate
-      const steerInput = joyVec.x;    // right = positive
-
-      keys.w = forwardInput > 0.2 ? 1 : 0;
-      keys.s = forwardInput < -0.2 ? 1 : 0;
-
-      if (steerInput > 0.2) {
-        keys.d = 1; keys.a = 0;
-      } else if (steerInput < -0.2) {
-        keys.a = 1; keys.d = 0;
-      } else {
-        keys.a = 0; keys.d = 0;
-      }
-    }
-
-    // Acceleration / braking
-    if (keys.w) speed += accel * dt;
-    else if (keys.s) speed -= accel * dt;
-    else {
-      if (speed > 0) speed -= friction * dt;
-      if (speed < 0) speed += friction * dt;
-    }
-
-    if (keys.space) speed *= 0.9;
-
-    speed = Math.max(-0.3, Math.min(maxSpeed, speed));
+    // Speed
+    speed += forward * accel;
+    speed *= (keys.drift ? 0.95 : 0.9);
 
     // Steering
-    if (keys.a) steering += steeringSpeed * dt;
-    else if (keys.d) steering -= steeringSpeed * dt;
-    else steering *= 0.9;
+    steering = turn * steerSpeed;
 
-    steering = Math.max(-maxSteer, Math.min(maxSteer, steering));
-
-    // Rotate taxi
-    taxi.rotation.y += steering * speed * dt * 2;
+    // Rotation
+    rotY += steering * (speed/10);
 
     // Drift physics
-    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(taxi.quaternion);
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(taxi.quaternion);
+    const rad = rotY * Math.PI/180;
+    const fx = Math.sin(rad);
+    const fz = Math.cos(rad);
 
-    const forwardVel = forward.clone().multiplyScalar(vel.dot(forward));
-    let sideVel = right.clone().multiplyScalar(vel.dot(right));
+    let targetVX = fx * speed;
+    let targetVZ = fz * speed;
 
-    sideVel.multiplyScalar(grip);
-    sideVel.add(right.clone().multiplyScalar(steering * speed * driftFactor));
+    velX = velX * grip + targetVX * (1-grip);
+    velZ = velZ * grip + targetVZ * (1-grip);
 
-    vel = forwardVel.add(sideVel);
-    vel.add(forward.clone().multiplyScalar(speed * dt * 2));
+    posX += velX;
+    posZ += velZ;
 
-    taxi.position.add(vel);
-
-    // Skid marks when sliding sideways
-    const sideSpeed = Math.abs(vel.dot(right));
-    if (sideSpeed > 0.05 && Math.abs(speed) > 0.1) {
-      const rearOffsetL = new THREE.Vector3(-1.2, 0.05, 2.5).applyQuaternion(taxi.quaternion);
-      const rearOffsetR = new THREE.Vector3(1.2, 0.05, 2.5).applyQuaternion(taxi.quaternion);
-      const posL = taxi.position.clone().add(rearOffsetL);
-      const posR = taxi.position.clone().add(rearOffsetR);
-      addSkidAt(posL, forward);
-      addSkidAt(posR, forward);
+    // Skid marks
+    if (Math.abs(steering) > 0.5 && Math.abs(speed) > 1) {
+        addSkid(posX - fx*20, posZ - fz*20, rotY);
     }
 
-    // Wheel spin
-    const spin = speed * dt * 5;
-    wFL.rotation.x += spin;
-    wFR.rotation.x += spin;
-    wRL.rotation.x += spin;
-    wRR.rotation.x += spin;
+    // Apply transforms
+    world.style.transform =
+        `translateX(${-posX}px) translateZ(${-posZ}px) rotateY(${rotY}deg)`;
 
-    updateCamera();
-    renderer.render(scene, camera);
-  }
-
-  animate(performance.now());
-
-  window.addEventListener("resize", () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-
-    if (isMobile) {
-      const rect = mobileControls.getBoundingClientRect();
-      joyCenter.x = rect.left + rect.width / 2;
-      joyCenter.y = rect.top + rect.height / 2;
-    }
-  });
+    requestAnimationFrame(loop);
+}
+loop();
 </script>
 </body>
 </html>
