@@ -2,36 +2,59 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Taxi Boss Style 3D Demo</title>
+  <title>Taxi Boss Style 3D Game</title>
   <style>
     html, body {
       margin: 0;
       padding: 0;
       overflow: hidden;
-      background: #111;
-      font-family: sans-serif;
+      background: #000;
+      font-family: system-ui, sans-serif;
     }
-    #info {
+    #hud {
       position: absolute;
       top: 10px;
       left: 10px;
       color: #fff;
-      background: rgba(0,0,0,0.5);
+      background: rgba(0,0,0,0.6);
       padding: 8px 12px;
       border-radius: 4px;
       font-size: 13px;
       z-index: 10;
+      max-width: 260px;
+    }
+    #hud strong {
+      font-size: 15px;
+    }
+    #centerMsg {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #fff;
+      background: rgba(0,0,0,0.7);
+      padding: 10px 16px;
+      border-radius: 4px;
+      font-size: 16px;
+      z-index: 9;
+      display: none;
+      text-align: center;
     }
   </style>
 </head>
 <body>
-<div id="info">
-  <strong>Taxi Boss Style 3D (Prototype)</strong><br>
-  W / A / S / D or Arrow Keys – drive<br>
-  Mouse drag – orbit camera<br>
+<div id="hud">
+  <strong>Taxi Boss Style 3D</strong><br>
+  W/S or ↑/↓ – accelerate / brake<br>
+  A/D or ←/→ – steer • Space – handbrake<br>
+  <br>
+  <span id="cash">Cash: $0</span><br>
+  <span id="fare">Fare: none</span><br>
+  <span id="hint">Drive to a green passenger marker.</span>
 </div>
+<div id="centerMsg"></div>
 
-<!-- Three.js CDN -->
+<!-- Three.js -->
 <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
 <script src="https://unpkg.com/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
 
@@ -60,28 +83,28 @@
   controls.target.set(0, 2, 0);
 
   // === Lights ===
-  const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+  const ambient = new THREE.AmbientLight(0xffffff, 0.45);
   scene.add(ambient);
 
-  const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-  dirLight.position.set(10, 20, 10);
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+  dirLight.position.set(20, 40, 10);
   scene.add(dirLight);
 
-  // === Ground (road area) ===
-  const groundGeo = new THREE.PlaneGeometry(200, 200);
+  // === Ground ===
+  const groundGeo = new THREE.PlaneGeometry(260, 260);
   const groundMat = new THREE.MeshStandardMaterial({
-    color: 0x222222,
-    roughness: 0.9,
-    metalness: 0.1
+    color: 0x202020,
+    roughness: 0.95,
+    metalness: 0.05
   });
   const ground = new THREE.Mesh(groundGeo, groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
 
-  // === Simple road grid ===
+  // === Roads ===
   const roadMat = new THREE.MeshStandardMaterial({
-    color: 0x333333,
+    color: 0x303030,
     roughness: 0.8
   });
 
@@ -94,18 +117,18 @@
     scene.add(mesh);
   }
 
-  // A few long roads crossing like a simple city grid
-  createRoad(0, 0, 200, 12, 0);      // main horizontal
-  createRoad(0, 40, 200, 10, 0);
-  createRoad(0, -40, 200, 10, 0);
-  createRoad(0, 0, 200, 12, Math.PI / 2); // main vertical
-  createRoad(40, 0, 200, 10, Math.PI / 2);
-  createRoad(-40, 0, 200, 10, Math.PI / 2);
+  // Simple grid
+  const lanes = [0, 40, -40, 80, -80];
+  lanes.forEach(z => createRoad(0, z, 260, 12, 0));
+  lanes.forEach(x => createRoad(x, 0, 260, 12, Math.PI / 2));
 
   // === Buildings ===
-  const buildingMat1 = new THREE.MeshStandardMaterial({ color: 0x4444aa });
-  const buildingMat2 = new THREE.MeshStandardMaterial({ color: 0xaa4444 });
-  const buildingMat3 = new THREE.MeshStandardMaterial({ color: 0x44aa44 });
+  const buildingMats = [
+    new THREE.MeshStandardMaterial({ color: 0x4444aa }),
+    new THREE.MeshStandardMaterial({ color: 0xaa4444 }),
+    new THREE.MeshStandardMaterial({ color: 0x44aa44 }),
+    new THREE.MeshStandardMaterial({ color: 0x888888 })
+  ];
 
   function addBuilding(x, z, w, d, h, mat) {
     const geo = new THREE.BoxGeometry(w, h, d);
@@ -116,61 +139,63 @@
     scene.add(mesh);
   }
 
-  // Scatter some buildings around the roads
-  const mats = [buildingMat1, buildingMat2, buildingMat3];
-  for (let i = 0; i < 80; i++) {
-    const mat = mats[Math.floor(Math.random() * mats.length)];
-    const w = 4 + Math.random() * 8;
-    const d = 4 + Math.random() * 8;
-    const h = 6 + Math.random() * 20;
+  for (let i = 0; i < 120; i++) {
+    const mat = buildingMats[Math.floor(Math.random() * buildingMats.length)];
+    const w = 4 + Math.random() * 10;
+    const d = 4 + Math.random() * 10;
+    const h = 8 + Math.random() * 30;
 
-    // keep them off the main roads a bit
-    let x = (Math.random() - 0.5) * 180;
-    let z = (Math.random() - 0.5) * 180;
-    if (Math.abs(x) < 12 || Math.abs(z) < 12) {
-      i--;
-      continue;
-    }
+    let x = (Math.random() - 0.5) * 230;
+    let z = (Math.random() - 0.5) * 230;
+
+    // keep off roads
+    if (Math.abs(x) < 14 || Math.abs(z) < 14) { i--; continue; }
+    if (Math.abs(Math.abs(x) - 40) < 12 || Math.abs(Math.abs(z) - 40) < 12) { i--; continue; }
+    if (Math.abs(Math.abs(x) - 80) < 12 || Math.abs(Math.abs(z) - 80) < 12) { i--; continue; }
+
     addBuilding(x, z, w, d, h, mat);
   }
 
-  // === Taxi (player car) ===
+  // === Taxi ===
   const taxiGroup = new THREE.Group();
 
-  // Body
-  const bodyGeo = new THREE.BoxGeometry(2.2, 0.8, 4);
+  const bodyGeo = new THREE.BoxGeometry(2.4, 0.9, 4.2);
   const bodyMat = new THREE.MeshStandardMaterial({ color: 0xffd000 });
   const body = new THREE.Mesh(bodyGeo, bodyMat);
-  body.position.y = 0.8;
+  body.position.y = 0.9;
   taxiGroup.add(body);
 
-  // Roof
-  const roofGeo = new THREE.BoxGeometry(1.6, 0.6, 2.2);
+  const roofGeo = new THREE.BoxGeometry(1.7, 0.6, 2.2);
   const roofMat = new THREE.MeshStandardMaterial({ color: 0xfff6a0 });
   const roof = new THREE.Mesh(roofGeo, roofMat);
-  roof.position.set(0, 1.3, -0.2);
+  roof.position.set(0, 1.4, -0.1);
   taxiGroup.add(roof);
 
-  // Wheels
-  const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.4, 16);
+  const signGeo = new THREE.BoxGeometry(0.9, 0.25, 0.6);
+  const signMat = new THREE.MeshStandardMaterial({ color: 0x000000 });
+  const sign = new THREE.Mesh(signGeo, signMat);
+  sign.position.set(0, 1.8, -0.1);
+  taxiGroup.add(sign);
+
+  const wheelGeo = new THREE.CylinderGeometry(0.45, 0.45, 0.5, 16);
   const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
 
   function addWheel(x, z) {
     const wheel = new THREE.Mesh(wheelGeo, wheelMat);
     wheel.rotation.z = Math.PI / 2;
-    wheel.position.set(x, 0.4, z);
+    wheel.position.set(x, 0.45, z);
     taxiGroup.add(wheel);
   }
 
-  addWheel(1.1, 1.4);
-  addWheel(-1.1, 1.4);
-  addWheel(1.1, -1.4);
-  addWheel(-1.1, -1.4);
+  addWheel(1.2, 1.5);
+  addWheel(-1.2, 1.5);
+  addWheel(1.2, -1.5);
+  addWheel(-1.2, -1.5);
 
   taxiGroup.position.set(0, 0, 0);
   scene.add(taxiGroup);
 
-  // === Movement ===
+  // === Input ===
   const keys = {
     ArrowUp: false,
     ArrowDown: false,
@@ -179,46 +204,129 @@
     KeyW: false,
     KeyS: false,
     KeyA: false,
-    KeyD: false
+    KeyD: false,
+    Space: false
   };
 
   window.addEventListener("keydown", (e) => {
-    if (keys.hasOwnProperty(e.code)) {
-      keys[e.code] = true;
-    }
+    if (keys.hasOwnProperty(e.code)) keys[e.code] = true;
   });
-
   window.addEventListener("keyup", (e) => {
-    if (keys.hasOwnProperty(e.code)) {
-      keys[e.code] = false;
-    }
+    if (keys.hasOwnProperty(e.code)) keys[e.code] = false;
   });
 
+  // === Movement physics ===
   let speed = 0;
-  let maxSpeed = 0.35;
-  let accel = 0.01;
-  let brake = 0.02;
-  let friction = 0.008;
-  let steerSpeed = 0.03;
+  const maxSpeed = 0.6;
+  const accel = 0.02;
+  const brake = 0.04;
+  const friction = 0.01;
+  const steerSpeed = 0.035;
 
-  // === Camera follow offset ===
-  const followOffset = new THREE.Vector3(0, 6, 10);
-  const cameraLerpFactor = 0.08;
+  // === Camera follow ===
+  const followOffset = new THREE.Vector3(0, 7, 12);
+  const cameraLerpFactor = 0.1;
 
-  // === Animation loop ===
+  // === Gameplay state ===
+  let cash = 0;
+  let activePassenger = null;
+  let activeDestination = null;
+  let passengerMesh = null;
+  let destinationMesh = null;
+  let fareDistance = 0;
+
+  const cashEl = document.getElementById("cash");
+  const fareEl = document.getElementById("fare");
+  const hintEl = document.getElementById("hint");
+  const centerMsg = document.getElementById("centerMsg");
+
+  function showCenterMsg(text, ms = 1200) {
+    centerMsg.textContent = text;
+    centerMsg.style.display = "block";
+    setTimeout(() => {
+      centerMsg.style.display = "none";
+    }, ms);
+  }
+
+  function randomRoadPosition() {
+    // pick a random lane and random offset along it
+    const laneIndex = Math.floor(Math.random() * lanes.length);
+    const horizontal = Math.random() < 0.5;
+    const offset = (Math.random() - 0.5) * 220;
+
+    if (horizontal) {
+      return new THREE.Vector3(offset, 0, lanes[laneIndex]);
+    } else {
+      return new THREE.Vector3(lanes[laneIndex], 0, offset);
+    }
+  }
+
+  function spawnPassenger() {
+    if (passengerMesh) scene.remove(passengerMesh);
+    if (destinationMesh) { scene.remove(destinationMesh); destinationMesh = null; }
+
+    const pos = randomRoadPosition();
+    activePassenger = { position: pos.clone() };
+
+    const geo = new THREE.CylinderGeometry(0.4, 0.4, 1.4, 12);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x00ff55, emissive: 0x003311 });
+    passengerMesh = new THREE.Mesh(geo, mat);
+    passengerMesh.position.set(pos.x, 0.7, pos.z);
+    scene.add(passengerMesh);
+
+    fareEl.textContent = "Fare: waiting passenger";
+    hintEl.textContent = "Drive to the green marker and stop close to pick up.";
+  }
+
+  function spawnDestination() {
+    if (destinationMesh) scene.remove(destinationMesh);
+
+    let pos;
+    let attempts = 0;
+    do {
+      pos = randomRoadPosition();
+      attempts++;
+    } while (pos.distanceTo(activePassenger.position) < 40 && attempts < 20);
+
+    activeDestination = { position: pos.clone() };
+    fareDistance = activePassenger.position.distanceTo(activeDestination.position);
+
+    const geo = new THREE.CylinderGeometry(0.5, 0.5, 0.2, 16);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x3399ff, emissive: 0x001133 });
+    destinationMesh = new THREE.Mesh(geo, mat);
+    destinationMesh.position.set(pos.x, 0.11, pos.z);
+    scene.add(destinationMesh);
+
+    fareEl.textContent = "Fare: passenger on board";
+    hintEl.textContent = "Drive to the blue marker and stop to drop off.";
+  }
+
+  function updateHUD() {
+    cashEl.textContent = "Cash: $" + cash.toFixed(0);
+  }
+
+  // initial passenger
+  spawnPassenger();
+  updateHUD();
+
+  // === Main loop ===
   function animate() {
     requestAnimationFrame(animate);
 
-    // Forward / backward
-    const forwardPressed = keys.ArrowUp || keys.KeyW;
-    const backwardPressed = keys.ArrowDown || keys.KeyS;
+    // Input
+    const forward = keys.ArrowUp || keys.KeyW;
+    const backward = keys.ArrowDown || keys.KeyS;
+    const left = keys.ArrowLeft || keys.KeyA;
+    const right = keys.ArrowRight || keys.KeyD;
+    const handbrake = keys.Space;
 
-    if (forwardPressed) {
+    // Acceleration / braking
+    if (forward) {
       speed += accel;
-    } else if (backwardPressed) {
-      speed -= accel;
+    } else if (backward) {
+      speed -= accel * 0.8;
     } else {
-      // friction
+      // natural friction
       if (speed > 0) {
         speed -= friction;
         if (speed < 0) speed = 0;
@@ -228,49 +336,104 @@
       }
     }
 
+    // Handbrake
+    if (handbrake) {
+      if (speed > 0) {
+        speed -= brake;
+        if (speed < 0) speed = 0;
+      } else if (speed < 0) {
+        speed += brake;
+        if (speed > 0) speed = 0;
+      }
+    }
+
     // Clamp speed
     if (speed > maxSpeed) speed = maxSpeed;
-    if (speed < -maxSpeed * 0.6) speed = -maxSpeed * 0.6;
+    if (speed < -maxSpeed * 0.5) speed = -maxSpeed * 0.5;
 
     // Steering
-    const leftPressed = keys.ArrowLeft || keys.KeyA;
-    const rightPressed = keys.ArrowRight || keys.KeyD;
-
-    if (leftPressed && speed !== 0) {
-      taxiGroup.rotation.y += steerSpeed * (speed > 0 ? 1 : -1);
+    if (speed !== 0) {
+      if (left) {
+        taxiGroup.rotation.y += steerSpeed * (speed > 0 ? 1 : -1);
+      }
+      if (right) {
+        taxiGroup.rotation.y -= steerSpeed * (speed > 0 ? 1 : -1);
+      }
     }
-    if (rightPressed && speed !== 0) {
-      taxiGroup.rotation.y -= steerSpeed * (speed > 0 ? 1 : -1);
-    }
 
-    // Move taxi forward in its local direction
-    const forward = new THREE.Vector3(0, 0, -1);
-    forward.applyQuaternion(taxiGroup.quaternion);
-    taxiGroup.position.addScaledVector(forward, speed);
+    // Move taxi
+    const forwardVec = new THREE.Vector3(0, 0, -1);
+    forwardVec.applyQuaternion(taxiGroup.quaternion);
+    taxiGroup.position.addScaledVector(forwardVec, speed);
 
-    // Keep taxi roughly within bounds
-    taxiGroup.position.x = THREE.MathUtils.clamp(taxiGroup.position.x, -95, 95);
-    taxiGroup.position.z = THREE.MathUtils.clamp(taxiGroup.position.z, -95, 95);
+    // Bounds
+    taxiGroup.position.x = THREE.MathUtils.clamp(taxiGroup.position.x, -125, 125);
+    taxiGroup.position.z = THREE.MathUtils.clamp(taxiGroup.position.z, -125, 125);
 
     // Camera follow
-    const desiredPosition = taxiGroup.position
+    const desiredCamPos = taxiGroup.position
       .clone()
       .add(
         followOffset
           .clone()
           .applyAxisAngle(new THREE.Vector3(0, 1, 0), taxiGroup.rotation.y)
       );
-
-    camera.position.lerp(desiredPosition, cameraLerpFactor);
-    controls.target.lerp(taxiGroup.position.clone().add(new THREE.Vector3(0, 1.5, 0)), 0.15);
+    camera.position.lerp(desiredCamPos, cameraLerpFactor);
+    controls.target.lerp(taxiGroup.position.clone().add(new THREE.Vector3(0, 1.6, 0)), 0.15);
     controls.update();
+
+    // === Gameplay: pickup / dropoff ===
+    const taxiPos2D = new THREE.Vector2(taxiGroup.position.x, taxiGroup.position.z);
+
+    // Pickup
+    if (activePassenger && passengerMesh) {
+      const passPos2D = new THREE.Vector2(
+        activePassenger.position.x,
+        activePassenger.position.z
+      );
+      const dist = taxiPos2D.distanceTo(passPos2D);
+
+      if (dist < 3 && Math.abs(speed) < 0.05) {
+        // picked up
+        scene.remove(passengerMesh);
+        passengerMesh = null;
+        showCenterMsg("Passenger picked up!");
+        spawnDestination();
+      }
+    }
+
+    // Dropoff
+    if (activeDestination && destinationMesh && !passengerMesh) {
+      const destPos2D = new THREE.Vector2(
+        activeDestination.position.x,
+        activeDestination.position.z
+      );
+      const dist = taxiPos2D.distanceTo(destPos2D);
+
+      if (dist < 3 && Math.abs(speed) < 0.05) {
+        const tripDist = fareDistance || 40;
+        const reward = 10 + tripDist * 0.4;
+        cash += reward;
+        updateHUD();
+        showCenterMsg("Fare complete +$" + reward.toFixed(0));
+        scene.remove(destinationMesh);
+        destinationMesh = null;
+        activeDestination = null;
+        activePassenger = null;
+        fareEl.textContent = "Fare: none";
+        hintEl.textContent = "Nice! New passenger spawning...";
+        setTimeout(() => {
+          spawnPassenger();
+        }, 800);
+      }
+    }
 
     renderer.render(scene, camera);
   }
 
   animate();
 
-  // === Resize handling ===
+  // Resize
   window.addEventListener("resize", () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
