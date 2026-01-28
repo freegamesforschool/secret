@@ -1,406 +1,249 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8">
-<title>Raw WebGL 3D Drift</title>
+<title>Raw WebGL Drift</title>
 <style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    overflow: hidden;
-    background: #000;
-  }
-  canvas {
-    display: block;
-    width: 100vw;
-    height: 100vh;
-  }
+  html,body { margin:0; padding:0; overflow:hidden; background:#000; }
+  canvas { width:100vw; height:100vh; display:block; }
   #hud {
-    position: fixed;
-    left: 10px;
-    top: 10px;
-    color: #fff;
-    font-family: system-ui, sans-serif;
-    font-size: 14px;
-    text-shadow: 0 0 4px #000;
-    pointer-events: none;
+    position:fixed; top:10px; left:10px; color:white;
+    font-family:sans-serif; font-size:14px; text-shadow:0 0 4px black;
   }
 </style>
 </head>
 <body>
-<canvas id="glcanvas"></canvas>
-<div id="hud">W/S: throttle | A/D: steer | Space: handbrake drift</div>
+<canvas id="gl"></canvas>
+<div id="hud">W/S accelerate/brake • A/D steer • Space drift</div>
 <script>
-// ---------- Input ----------
+// ---------------- INPUT ----------------
 const keys = {};
-window.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
-window.addEventListener("keyup",   e => keys[e.key.toLowerCase()] = false);
+onkeydown = e => keys[e.key.toLowerCase()] = true;
+onkeyup   = e => keys[e.key.toLowerCase()] = false;
 
-// ---------- WebGL setup ----------
-const canvas = document.getElementById("glcanvas");
+// ---------------- WEBGL SETUP ----------------
+const canvas = document.getElementById("gl");
 const gl = canvas.getContext("webgl");
-if (!gl) {
-  alert("WebGL not supported");
-}
-
 function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-  gl.viewport(0, 0, canvas.width, canvas.height);
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
+  gl.viewport(0,0,canvas.width,canvas.height);
 }
-window.addEventListener("resize", resize);
 resize();
+onresize = resize;
 
-// ---------- Shaders ----------
-const vsSource = `
-attribute vec3 aPosition;
-attribute vec3 aColor;
+// ---------------- SHADERS ----------------
+const vs = `
+attribute vec3 aPos;
+attribute vec3 aCol;
 uniform mat4 uMVP;
-varying vec3 vColor;
-void main(void) {
-  gl_Position = uMVP * vec4(aPosition, 1.0);
-  vColor = aColor;
-}
-`;
-
-const fsSource = `
+varying vec3 vCol;
+void main(){
+  gl_Position = uMVP * vec4(aPos,1.0);
+  vCol = aCol;
+}`;
+const fs = `
 precision mediump float;
-varying vec3 vColor;
-void main(void) {
-  gl_FragColor = vec4(vColor, 1.0);
+varying vec3 vCol;
+void main(){ gl_FragColor = vec4(vCol,1.0); }`;
+
+function compile(type,src){
+  const s = gl.createShader(type);
+  gl.shaderSource(s,src);
+  gl.compileShader(s);
+  return s;
 }
-`;
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER,vs));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER,fs));
+gl.linkProgram(prog);
+gl.useProgram(prog);
 
-function compileShader(type, source) {
-  const shader = gl.createShader(type);
-  gl.shaderSource(shader, source);
-  gl.compileShader(shader);
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    console.error(gl.getShaderInfoLog(shader));
-    gl.deleteShader(shader);
-    return null;
-  }
-  return shader;
-}
+const aPos = gl.getAttribLocation(prog,"aPos");
+const aCol = gl.getAttribLocation(prog,"aCol");
+const uMVP = gl.getUniformLocation(prog,"uMVP");
 
-const vs = compileShader(gl.VERTEX_SHADER, vsSource);
-const fs = compileShader(gl.FRAGMENT_SHADER, fsSource);
+// ---------------- GEOMETRY ----------------
+// Ground plane
+const ground = [];
+const G = 200;
+ground.push(
+  -G,0,-G, 0.1,0.1,0.1,
+   G,0,-G, 0.1,0.1,0.1,
+   G,0, G, 0.1,0.1,0.1,
+  -G,0,-G, 0.1,0.1,0.1,
+   G,0, G, 0.1,0.1,0.1,
+  -G,0, G, 0.1,0.1,0.1
+);
 
-const program = gl.createProgram();
-gl.attachShader(program, vs);
-gl.attachShader(program, fs);
-gl.linkProgram(program);
-if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-  console.error(gl.getProgramInfoLog(program));
-}
-gl.useProgram(program);
-
-const aPosition = gl.getAttribLocation(program, "aPosition");
-const aColor    = gl.getAttribLocation(program, "aColor");
-const uMVP      = gl.getUniformLocation(program, "uMVP");
-
-// ---------- Geometry ----------
-// Simple track: big plane + lane lines
-// Car: small box
-
-// Track plane (two triangles)
-const trackSize = 200.0;
-const trackVertices = [
-  //   x,      y,   z,    r, g, b
-  -trackSize, 0.0, -trackSize, 0.1, 0.1, 0.1,
-   trackSize, 0.0, -trackSize, 0.1, 0.1, 0.1,
-   trackSize, 0.0,  trackSize, 0.1, 0.1, 0.1,
-  -trackSize, 0.0, -trackSize, 0.1, 0.1, 0.1,
-   trackSize, 0.0,  trackSize, 0.1, 0.1, 0.1,
-  -trackSize, 0.0,  trackSize, 0.1, 0.1, 0.1,
-];
-
-// Lane lines (simple strips along z)
-const laneVertices = [];
-const laneHalfWidth = 1.5;
-for (let i = -trackSize; i < trackSize; i += 5) {
-  const z1 = i;
-  const z2 = i + 2;
-  const x1 = -laneHalfWidth;
-  const x2 = -laneHalfWidth + 0.3;
-  const x3 = laneHalfWidth - 0.3;
-  const x4 = laneHalfWidth;
-
-  // left stripe
-  laneVertices.push(
-    x1, 0.01, z1, 1,1,1,
-    x2, 0.01, z1, 1,1,1,
-    x2, 0.01, z2, 1,1,1,
-    x1, 0.01, z1, 1,1,1,
-    x2, 0.01, z2, 1,1,1,
-    x1, 0.01, z2, 1,1,1,
-  );
-  // right stripe
-  laneVertices.push(
-    x3, 0.01, z1, 1,1,1,
-    x4, 0.01, z1, 1,1,1,
-    x4, 0.01, z2, 1,1,1,
-    x3, 0.01, z1, 1,1,1,
-    x4, 0.01, z2, 1,1,1,
-    x3, 0.01, z2, 1,1,1,
+// Car box
+const car = [];
+const w=0.7, l=1.3, h=0.4;
+function quad(x1,y1,z1, x2,y2,z2, x3,y3,z3, x4,y4,z4, r,g,b){
+  car.push(
+    x1,y1,z1,r,g,b, x2,y2,z2,r,g,b, x3,y3,z3,r,g,b,
+    x1,y1,z1,r,g,b, x3,y3,z3,r,g,b, x4,y4,z4,r,g,b
   );
 }
+quad(-w,0,-l,  w,0,-l,  w,h,-l, -w,h,-l, 0.8,0.1,0.1);
+quad(-w,0, l,  w,0, l,  w,h, l, -w,h, l, 0.8,0.1,0.1);
+quad(-w,0,-l, -w,0, l, -w,h, l, -w,h,-l, 0.7,0,0);
+quad( w,0,-l,  w,0, l,  w,h, l,  w,h,-l, 0.7,0,0);
+quad(-w,h,-l,  w,h,-l,  w,h, l, -w,h, l, 0.9,0.2,0.2);
 
-// Car box (centered at origin, y up)
-const carHalfW = 0.7;
-const carHalfL = 1.3;
-const carH = 0.4;
-const carVertices = [
-  // top
-  -carHalfW, carH, -carHalfL, 0.9,0.1,0.1,
-   carHalfW, carH, -carHalfL, 0.9,0.1,0.1,
-   carHalfW, carH,  carHalfL, 0.9,0.1,0.1,
-  -carHalfW, carH, -carHalfL, 0.9,0.1,0.1,
-   carHalfW, carH,  carHalfL, 0.9,0.1,0.1,
-  -carHalfW, carH,  carHalfL, 0.9,0.1,0.1,
-
-  // sides
-  -carHalfW, 0.0, -carHalfL, 0.7,0.0,0.0,
-   carHalfW, 0.0, -carHalfL, 0.7,0.0,0.0,
-   carHalfW, carH, -carHalfL, 0.7,0.0,0.0,
-  -carHalfW, 0.0, -carHalfL, 0.7,0.0,0.0,
-   carHalfW, carH, -carHalfL, 0.7,0.0,0.0,
-  -carHalfW, carH, -carHalfL, 0.7,0.0,0.0,
-
-  -carHalfW, 0.0,  carHalfL, 0.7,0.0,0.0,
-   carHalfW, 0.0,  carHalfL, 0.7,0.0,0.0,
-   carHalfW, carH,  carHalfL, 0.7,0.0,0.0,
-  -carHalfW, 0.0,  carHalfL, 0.7,0.0,0.0,
-   carHalfW, carH,  carHalfL, 0.7,0.0,0.0,
-  -carHalfW, carH,  carHalfL, 0.7,0.0,0.0,
-
-  -carHalfW, 0.0, -carHalfL, 0.6,0.0,0.0,
-  -carHalfW, 0.0,  carHalfL, 0.6,0.0,0.0,
-  -carHalfW, carH,  carHalfL, 0.6,0.0,0.0,
-  -carHalfW, 0.0, -carHalfL, 0.6,0.0,0.0,
-  -carHalfW, carH,  carHalfL, 0.6,0.0,0.0,
-  -carHalfW, carH, -carHalfL, 0.6,0.0,0.0,
-
-   carHalfW, 0.0, -carHalfL, 0.6,0.0,0.0,
-   carHalfW, 0.0,  carHalfL, 0.6,0.0,0.0,
-   carHalfW, carH,  carHalfL, 0.6,0.0,0.0,
-   carHalfW, 0.0, -carHalfL, 0.6,0.0,0.0,
-   carHalfW, carH,  carHalfL, 0.6,0.0,0.0,
-   carHalfW, carH, -carHalfL, 0.6,0.0,0.0,
-];
-
-function createBuffer(data) {
-  const buf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
-  return buf;
+function makeBuf(arr){
+  const b = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,b);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(arr),gl.STATIC_DRAW);
+  return b;
 }
+const groundBuf = makeBuf(ground);
+const carBuf = makeBuf(car);
 
-const trackBuffer = createBuffer(trackVertices);
-const laneBuffer  = createBuffer(laneVertices);
-const carBuffer   = createBuffer(carVertices);
-
-// ---------- Matrices ----------
-function perspective(fovy, aspect, near, far) {
-  const f = 1.0 / Math.tan(fovy / 2);
-  const nf = 1 / (near - far);
-  const out = new Float32Array(16);
-  out[0] = f / aspect;
-  out[5] = f;
-  out[10] = (far + near) * nf;
-  out[11] = -1;
-  out[14] = (2 * far * near) * nf;
-  return out;
-}
-
-function lookAt(eye, center, up) {
-  const [ex, ey, ez] = eye;
-  const [cx, cy, cz] = center;
-  const [ux, uy, uz] = up;
-
-  let zx = ex - cx;
-  let zy = ey - cy;
-  let zz = ez - cz;
-  let len = Math.hypot(zx, zy, zz);
-  zx /= len; zy /= len; zz /= len;
-
-  let xx = uy * zz - uz * zy;
-  let xy = uz * zx - ux * zz;
-  let xz = ux * zy - uy * zx;
-  len = Math.hypot(xx, xy, xz);
-  xx /= len; xy /= len; xz /= len;
-
-  let yx = zy * xz - zz * xx;
-  let yy = zz * xx - zx * xz;
-  let yz = zx * xy - zy * xx;
-
-  const out = new Float32Array(16);
-  out[0] = xx; out[1] = yx; out[2] = zx; out[3] = 0;
-  out[4] = xy; out[5] = yy; out[6] = zy; out[7] = 0;
-  out[8] = xz; out[9] = yz; out[10] = zz; out[11] = 0;
-  out[12] = -(xx * ex + xy * ey + xz * ez);
-  out[13] = -(yx * ex + yy * ey + yz * ez);
-  out[14] = -(zx * ex + zy * ey + zz * ez);
-  out[15] = 1;
-  return out;
-}
-
-function multiply(a, b) {
-  const out = new Float32Array(16);
-  for (let i = 0; i < 4; ++i) {
-    const ai0 = a[i]; const ai1 = a[i+4]; const ai2 = a[i+8]; const ai3 = a[i+12];
-    out[i]    = ai0*b[0] + ai1*b[1] + ai2*b[2] + ai3*b[3];
-    out[i+4]  = ai0*b[4] + ai1*b[5] + ai2*b[6] + ai3*b[7];
-    out[i+8]  = ai0*b[8] + ai1*b[9] + ai2*b[10]+ ai3*b[11];
-    out[i+12] = ai0*b[12]+ ai1*b[13]+ ai2*b[14]+ ai3*b[15];
+// ---------------- MATRIX UTILS ----------------
+function mul(a,b){
+  const o=new Float32Array(16);
+  for(let i=0;i<4;i++){
+    for(let j=0;j<4;j++){
+      o[i*4+j]=a[i*4+0]*b[j+0]+a[i*4+1]*b[j+4]+a[i*4+2]*b[j+8]+a[i*4+3]*b[j+12];
+    }
   }
-  return out;
+  return o;
+}
+function perspective(fov,asp,n,f){
+  const t=Math.tan(fov/2);
+  return new Float32Array([
+    1/(asp*t),0,0,0,
+    0,1/t,0,0,
+    0,0,(f+n)/(n-f),-1,
+    0,0,(2*f*n)/(n-f),0
+  ]);
+}
+function lookAt(ex,ey,ez, cx,cy,cz){
+  let zx=ex-cx, zy=ey-cy, zz=ez-cz;
+  let rl=1/Math.hypot(zx,zy,zz); zx*=rl; zy*=rl; zz*=rl;
+  let xx=0*zz-1*zy, xy=1*zx-0*zz, xz=0*zy-0*zx;
+  rl=1/Math.hypot(xx,xy,xz); xx*=rl; xy*=rl; xz*=rl;
+  let yx=zy*xz-zz*xx, yy=zz*xy-zx*xz, yz=zx*xx-zy*xy;
+  return new Float32Array([
+    xx, yx, zx, 0,
+    xy, yy, zy, 0,
+    xz, yz, zz, 0,
+    -(xx*ex+xy*ey+xz*ez),
+    -(yx*ex+yy*ey+yz*ez),
+    -(zx*ex+zy*ey+zz*ez),
+    1
+  ]);
+}
+function rotY(a){
+  const c=Math.cos(a), s=Math.sin(a);
+  return new Float32Array([
+    c,0,s,0,
+    0,1,0,0,
+   -s,0,c,0,
+    0,0,0,1
+  ]);
+}
+function trans(x,y,z){
+  return new Float32Array([
+    1,0,0,0,
+    0,1,0,0,
+    0,0,1,0,
+    x,y,z,1
+  ]);
 }
 
-function translation(tx, ty, tz) {
-  const out = new Float32Array(16);
-  out[0]=1; out[5]=1; out[10]=1; out[15]=1;
-  out[12]=tx; out[13]=ty; out[14]=tz;
-  return out;
+// ---------------- PHYSICS ----------------
+let posX=0, posZ=0, yaw=0;
+let velX=0, velZ=0;
+
+const maxSpeed=40, accel=25, brake=40;
+const grip=4, driftGrip=1.2;
+const steer=2.5, friction=3;
+
+let last=performance.now();
+
+function update(dt){
+  const fwd = keys["w"]||keys["arrowup"];
+  const back= keys["s"]||keys["arrowdown"];
+  const left= keys["a"]||keys["arrowleft"];
+  const right=keys["d"]||keys["arrowright"];
+  const hb = keys[" "];
+
+  const fx=Math.sin(yaw), fz=Math.cos(yaw);
+  const vF = velX*fx + velZ*fz;
+  const vS = velX*fz - velZ*fx;
+
+  let sp=vF;
+  if(fwd) sp+=accel*dt;
+  if(back) sp-=brake*dt;
+  sp=Math.max(-maxSpeed*0.4, Math.min(maxSpeed,sp));
+
+  let st=0;
+  if(left) st+=1;
+  if(right) st-=1;
+  yaw += st*steer*dt*(sp/maxSpeed);
+
+  const g = hb? driftGrip : grip;
+  const newSide = vS*(1-g*dt);
+
+  velX = fx*sp + fz*newSide;
+  velZ = fz*sp - fx*newSide;
+
+  velX*=1-friction*dt*0.1;
+  velZ*=1-friction*dt*0.1;
+
+  posX+=velX*dt;
+  posZ+=velZ*dt;
+
+  if(posX>6){posX=6; velX*=-0.3;}
+  if(posX<-6){posX=-6; velX*=-0.3;}
+
+  const L=150;
+  if(posZ>L) posZ-=L*2;
+  if(posZ<-L) posZ+=L*2;
 }
 
-function rotationY(a) {
-  const c = Math.cos(a), s = Math.sin(a);
-  const out = new Float32Array(16);
-  out[0]= c; out[2]= s;
-  out[5]= 1;
-  out[8]=-s; out[10]=c;
-  out[15]=1;
-  return out;
+// ---------------- RENDER ----------------
+function draw(buf,count,model){
+  const asp=canvas.width/canvas.height;
+  const P=perspective(Math.PI/3,asp,0.1,500);
+  const camDist=6, camH=3;
+  const cx=posX - Math.sin(yaw)*camDist;
+  const cy=camH;
+  const cz=posZ - Math.cos(yaw)*camDist;
+  const V=lookAt(cx,cy,cz, posX,0.5,posZ);
+  const VP=mul(P,V);
+  const MVP=mul(VP,model);
+
+  gl.uniformMatrix4fv(uMVP,false,MVP);
+  gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.vertexAttribPointer(aPos,3,gl.FLOAT,false,24,0);
+  gl.vertexAttribPointer(aCol,3,gl.FLOAT,false,24,12);
+  gl.enableVertexAttribArray(aPos);
+  gl.enableVertexAttribArray(aCol);
+  gl.drawArrays(gl.TRIANGLES,0,count);
 }
 
-// ---------- Car physics (drift) ----------
-let carPos = { x: 0, z: 0 };
-let carVel = { x: 0, z: 0 };
-let carYaw = 0;
-
-const maxSpeed = 40;
-const accel = 25;
-const brake = 40;
-const friction = 4;
-const steerStrength = 2.5;
-const driftGrip = 4;
-const handbrakeGrip = 1.0;
-
-let lastTime = performance.now();
-
-function update(dt) {
-  // Input
-  const forward = keys["w"] || keys["arrowup"];
-  const back    = keys["s"] || keys["arrowdown"];
-  const left    = keys["a"] || keys["arrowleft"];
-  const right   = keys["d"] || keys["arrowright"];
-  const handbrake = keys[" "];
-
-  // Speed along car forward axis
-  const forwardDir = { x: Math.sin(carYaw), z: Math.cos(carYaw) };
-  const velForward = carVel.x * forwardDir.x + carVel.z * forwardDir.z;
-  const velSide    = carVel.x * forwardDir.z - carVel.z * forwardDir.x;
-
-  let targetGrip = handbrake ? handbrakeGrip : driftGrip;
-
-  let accelInput = 0;
-  if (forward) accelInput += accel;
-  if (back)    accelInput -= brake;
-
-  let speed = velForward + accelInput * dt;
-  speed = Math.max(-maxSpeed * 0.4, Math.min(maxSpeed, speed));
-
-  // Steering affects yaw based on forward speed
-  let steer = 0;
-  if (left)  steer += 1;
-  if (right) steer -= 1;
-  carYaw += steer * steerStrength * dt * (speed / maxSpeed);
-
-  // Lateral friction (drift)
-  const sideFriction = targetGrip * dt;
-  const newVelSide = velSide * Math.max(0, 1 - sideFriction);
-
-  // Recompose velocity
-  carVel.x = forwardDir.x * speed + forwardDir.z * newVelSide;
-  carVel.z = forwardDir.z * speed - forwardDir.x * newVelSide;
-
-  // Global friction
-  carVel.x *= (1 - friction * dt * 0.1);
-  carVel.z *= (1 - friction * dt * 0.1);
-
-  carPos.x += carVel.x * dt;
-  carPos.z += carVel.z * dt;
-
-  // Keep roughly on track
-  const maxX = 6;
-  if (carPos.x > maxX) { carPos.x = maxX; carVel.x *= -0.3; }
-  if (carPos.x < -maxX){ carPos.x = -maxX; carVel.x *= -0.3; }
-
-  // Loop z to stay near origin visually
-  const loopZ = 150;
-  if (carPos.z > loopZ)  carPos.z -= loopZ*2;
-  if (carPos.z < -loopZ) carPos.z += loopZ*2;
-}
-
-// ---------- Render ----------
-function drawMesh(buffer, vertexCount, modelMatrix) {
-  const aspect = canvas.width / canvas.height;
-  const proj = perspective(Math.PI / 3, aspect, 0.1, 500.0);
-
-  const camDist = 6;
-  const camHeight = 3;
-  const camTarget = [carPos.x, 0.5, carPos.z];
-  const camPos = [
-    carPos.x - Math.sin(carYaw) * camDist,
-    camHeight,
-    carPos.z - Math.cos(carYaw) * camDist,
-  ];
-  const view = lookAt(camPos, camTarget, [0,1,0]);
-
-  const vp = multiply(proj, view);
-  const mvp = multiply(vp, modelMatrix);
-
-  gl.uniformMatrix4fv(uMVP, false, mvp);
-
-  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-  gl.enableVertexAttribArray(aPosition);
-  gl.enableVertexAttribArray(aColor);
-  const stride = 6 * 4;
-  gl.vertexAttribPointer(aPosition, 3, gl.FLOAT, false, stride, 0);
-  gl.vertexAttribPointer(aColor,    3, gl.FLOAT, false, stride, 3*4);
-
-  gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
-}
-
-function render() {
-  const now = performance.now();
-  const dt = Math.min(0.05, (now - lastTime) / 1000);
-  lastTime = now;
+function loop(){
+  const now=performance.now();
+  const dt=Math.min(0.05,(now-last)/1000);
+  last=now;
 
   update(dt);
 
   gl.enable(gl.DEPTH_TEST);
-  gl.clearColor(0.02, 0.02, 0.05, 1);
-  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.clearColor(0,0,0,1);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
 
-  // Track
-  const trackModel = translation(0, 0, 0);
-  drawMesh(trackBuffer, trackVertices.length / 6, trackModel);
+  draw(groundBuf, ground.length/6, trans(0,0,0));
 
-  // Lane lines
-  const laneModel = translation(0, 0, 0);
-  drawMesh(laneBuffer, laneVertices.length / 6, laneModel);
+  const M = mul(trans(posX,0,posZ), rotY(yaw));
+  draw(carBuf, car.length/6, M);
 
-  // Car
-  const carT = translation(carPos.x, 0, carPos.z);
-  const carR = rotationY(carYaw);
-  const carM = multiply(carT, carR);
-  drawMesh(carBuffer, carVertices.length / 6, carM);
-
-  requestAnimationFrame(render);
+  requestAnimationFrame(loop);
 }
-render();
+loop();
 </script>
 </body>
 </html>
