@@ -2,286 +2,394 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>3D Taxi Drift</title>
+<title>Mini Taxi Boss (HTML Only)</title>
 <style>
-    html, body {
-        margin: 0;
-        padding: 0;
-        overflow: hidden;
-        background: #000;
-        touch-action: none;
-    }
-    #info {
-        position: absolute;
-        top: 10px;
-        left: 10px;
-        color: #fff;
-        font-family: sans-serif;
-        background: rgba(0,0,0,0.4);
-        padding: 6px 10px;
-        border-radius: 4px;
-        z-index: 10;
-    }
-    #joystick {
-        position: absolute;
-        left: 20px;
-        bottom: 20px;
-        width: 150px;
-        height: 150px;
-        border-radius: 50%;
-        border: 2px solid #fff5;
-        display: none;
-        z-index: 20;
-    }
-    #thumb {
-        width: 60px;
-        height: 60px;
-        background: #fff5;
-        border-radius: 50%;
-        position: absolute;
-        left: 45px;
-        top: 45px;
-    }
-    #driftBtn {
-        position: absolute;
-        right: 20px;
-        bottom: 40px;
-        width: 90px;
-        height: 90px;
-        border-radius: 50%;
-        background: #fff3;
-        border: 2px solid #fff7;
-        color: white;
-        font-size: 20px;
-        display: none;
-        justify-content: center;
-        align-items: center;
-        z-index: 20;
-    }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #111;
+    color: #fff;
+    font-family: Arial, sans-serif;
+    overflow: hidden;
+  }
+
+  #ui {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 10;
+    font-size: 14px;
+    background: rgba(0,0,0,0.5);
+    padding: 8px 10px;
+    border-radius: 6px;
+  }
+
+  #ui span {
+    display: inline-block;
+    margin-right: 10px;
+  }
+
+  #help {
+    margin-top: 4px;
+    font-size: 12px;
+    opacity: 0.8;
+  }
+
+  canvas {
+    display: block;
+    background: #1b1b1b;
+  }
 </style>
 </head>
-<body tabindex="0">
+<body>
+<div id="ui">
+  <div>
+    <span>💰 Cash: <span id="cash">0</span></span>
+    <span>🚕 Fare: <span id="fare">0</span></span>
+    <span>🎯 Job: <span id="jobStatus">None</span></span>
+  </div>
+  <div id="help">
+    Controls: W/A/S/D or Arrow Keys to drive.  
+    Drive over a green passenger to pick up, then to the red marker to drop off.
+  </div>
+</div>
+<canvas id="game"></canvas>
 
 <script>
-window.onload = () => document.body.focus();
-</script>
+(function() {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
 
-<div id="info">
-    <b>3D Taxi Drift</b><br>
-    W/S = accelerate / brake<br>
-    A/D = steer<br>
-    Space = drift
-</div>
+  function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  window.addEventListener('resize', resize);
+  resize();
 
-<div id="joystick"><div id="thumb"></div></div>
-<div id="driftBtn">DRIFT</div>
+  // UI elements
+  const cashEl = document.getElementById('cash');
+  const fareEl = document.getElementById('fare');
+  const jobStatusEl = document.getElementById('jobStatus');
 
-<!-- ⭐ EVERYTHING IS NOW INSIDE ONE MODULE -->
-<script type="module">
+  // World settings
+  const world = {
+    width: 2000,
+    height: 2000
+  };
 
-import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.148.0/build/three.module.js";
+  // Camera
+  const camera = {
+    x: 0,
+    y: 0
+  };
 
-/* -------------------------
-   YOUR ENTIRE GAME STARTS HERE
--------------------------- */
+  // Taxi
+  const taxi = {
+    x: world.width / 2,
+    y: world.height / 2,
+    w: 40,
+    h: 20,
+    angle: 0,
+    speed: 0,
+    maxSpeed: 4,
+    accel: 0.15,
+    friction: 0.05,
+    turnSpeed: 0.06
+  };
 
-// Scene
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x202030);
+  // Player stats
+  let cash = 0;
+  let currentFare = 0;
 
-// Camera
-const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 2000);
+  // Job system
+  let passenger = null;
+  let destination = null;
+  let hasPassenger = false;
 
-// Renderer
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(innerWidth, innerHeight);
-document.body.appendChild(renderer.domElement);
+  // Input
+  const keys = {};
+  window.addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+  });
+  window.addEventListener('keyup', e => {
+    keys[e.key.toLowerCase()] = false;
+  });
 
-// Lights
-scene.add(new THREE.AmbientLight(0xffffff, 0.4));
-const dir = new THREE.DirectionalLight(0xffffff, 0.8);
-dir.position.set(40, 80, 20);
-scene.add(dir);
+  function rand(min, max) {
+    return Math.random() * (max - min) + min;
+  }
 
-// Ground
-const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(3000, 3000),
-    new THREE.MeshStandardMaterial({ color: 0x222222 })
-);
-ground.rotation.x = -Math.PI/2;
-scene.add(ground);
+  // Generate simple "city" blocks (just rectangles as buildings)
+  const buildings = [];
+  for (let i = 0; i < 60; i++) {
+    const bw = rand(80, 200);
+    const bh = rand(80, 200);
+    const bx = rand(0, world.width - bw);
+    const by = rand(0, world.height - bh);
+    buildings.push({ x: bx, y: by, w: bw, h: bh });
+  }
 
-// Roads
-const roadMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
-const roadWidth = 20;
-const blockSize = 120;
+  function createPassenger() {
+    passenger = {
+      x: rand(100, world.width - 100),
+      y: rand(100, world.height - 100),
+      r: 14
+    };
+    destination = null;
+    hasPassenger = false;
+    currentFare = 0;
+    updateUI();
+  }
 
-for (let i = -10; i <= 10; i++) {
-    const v = new THREE.Mesh(new THREE.PlaneGeometry(roadWidth, 3000), roadMat);
-    v.rotation.x = -Math.PI/2;
-    v.position.x = i * blockSize;
-    scene.add(v);
+  function createDestination() {
+    destination = {
+      x: rand(100, world.width - 100),
+      y: rand(100, world.height - 100),
+      r: 18
+    };
+    currentFare = Math.floor(rand(50, 200));
+    hasPassenger = true;
+    updateUI();
+  }
 
-    const h = new THREE.Mesh(new THREE.PlaneGeometry(3000, roadWidth), roadMat);
-    h.rotation.x = -Math.PI/2;
-    h.position.z = i * blockSize;
-    scene.add(h);
-}
-
-// Buildings
-const buildingGeo = new THREE.BoxGeometry(40, 80, 40);
-const buildingMat = new THREE.MeshStandardMaterial({ color: 0x505070 });
-
-for (let x = -8; x <= 8; x++) {
-    for (let z = -8; z <= 8; z++) {
-        if (Math.abs(x) < 2 && Math.abs(z) < 2) continue;
-        const b = new THREE.Mesh(buildingGeo, buildingMat);
-        b.position.set(x * blockSize, 40, z * blockSize);
-        scene.add(b);
+  function updateUI() {
+    cashEl.textContent = cash;
+    fareEl.textContent = currentFare;
+    if (!passenger && !destination) {
+      jobStatusEl.textContent = 'None';
+    } else if (passenger && !hasPassenger) {
+      jobStatusEl.textContent = 'Pick up passenger';
+    } else if (hasPassenger && destination) {
+      jobStatusEl.textContent = 'Drive to destination';
     }
-}
+  }
 
-// Taxi
-const taxi = new THREE.Group();
+  createPassenger();
 
-const body = new THREE.Mesh(
-    new THREE.BoxGeometry(4, 1.2, 8),
-    new THREE.MeshStandardMaterial({ color: 0xffd000 })
-);
-body.position.y = 1;
-taxi.add(body);
+  function updateTaxi() {
+    const up = keys['w'] || keys['arrowup'];
+    const down = keys['s'] || keys['arrowdown'];
+    const left = keys['a'] || keys['arrowleft'];
+    const right = keys['d'] || keys['arrowright'];
 
-const roof = new THREE.Mesh(
-    new THREE.BoxGeometry(3, 1, 3.5),
-    new THREE.MeshStandardMaterial({ color: 0xfff5a0 })
-);
-roof.position.set(0, 1.8, -0.5);
-taxi.add(roof);
-
-const sign = new THREE.Mesh(
-    new THREE.BoxGeometry(1.5, 0.4, 0.8),
-    new THREE.MeshStandardMaterial({ color: 0x000000 })
-);
-sign.position.set(0, 2.4, -0.5);
-taxi.add(sign);
-
-scene.add(taxi);
-
-// Skid marks
-const skidGroup = new THREE.Group();
-scene.add(skidGroup);
-
-const skidMat = new THREE.MeshBasicMaterial({
-    color: 0x000000,
-    transparent: true,
-    opacity: 0.5
-});
-const skidGeo = new THREE.PlaneGeometry(0.4, 1.5);
-const skidPool = [];
-const maxSkids = 300;
-
-function addSkid(pos, dir) {
-    let s;
-    if (skidPool.length < maxSkids) {
-        s = new THREE.Mesh(skidGeo, skidMat);
-        s.rotation.x = -Math.PI/2;
-        skidGroup.add(s);
-        skidPool.push(s);
+    if (up) {
+      taxi.speed += taxi.accel;
+    } else if (down) {
+      taxi.speed -= taxi.accel;
     } else {
-        s = skidPool.shift();
-        skidPool.push(s);
-    }
-    s.position.copy(pos);
-    s.rotation.y = Math.atan2(dir.x, dir.z);
-}
-
-// Physics
-let speed = 0;
-let steering = 0;
-let vel = new THREE.Vector3(0,0,0);
-
-const accel = 0.02;
-const steerSpeed = 0.03;
-const driftFactor = 0.08;
-const grip = 0.9;
-
-// Input
-const keys = { w:0, s:0, a:0, d:0, space:0 };
-
-document.addEventListener("keydown", e => {
-    if (e.code === "KeyW") keys.w = 1;
-    if (e.code === "KeyS") keys.s = 1;
-    if (e.code === "KeyA") keys.a = 1;
-    if (e.code === "KeyD") keys.d = 1;
-    if (e.code === "Space") keys.space = 1;
-});
-document.addEventListener("keyup", e => {
-    if (e.code === "KeyW") keys.w = 0;
-    if (e.code === "KeyS") keys.s = 0;
-    if (e.code === "KeyA") keys.a = 0;
-    if (e.code === "KeyD") keys.d = 0;
-    if (e.code === "Space") keys.space = 0;
-});
-
-// Camera follow
-function updateCamera() {
-    const offset = new THREE.Vector3(0, 7, 14).applyQuaternion(taxi.quaternion);
-    const target = taxi.position.clone().add(offset);
-    camera.position.lerp(target, 0.15);
-    camera.lookAt(taxi.position.clone().add(new THREE.Vector3(0,2,0)));
-}
-
-// Main loop
-let last = performance.now();
-function animate(now) {
-    requestAnimationFrame(animate);
-    const dt = (now - last) / 16.67;
-    last = now;
-
-    const forwardInput = (keys.w - keys.s);
-    const steerInput = (keys.a - keys.d);
-
-    speed += forwardInput * accel * dt;
-    speed *= keys.space ? 0.9 : 0.98;
-
-    steering = steerInput * steerSpeed;
-
-    taxi.rotation.y += steering * speed * dt * 2;
-
-    const forward = new THREE.Vector3(0,0,-1).applyQuaternion(taxi.quaternion);
-    const right = new THREE.Vector3(1,0,0).applyQuaternion(taxi.quaternion);
-
-    const forwardVel = forward.clone().multiplyScalar(vel.dot(forward));
-    let sideVel = right.clone().multiplyScalar(vel.dot(right));
-
-    sideVel.multiplyScalar(grip);
-    sideVel.add(right.clone().multiplyScalar(steering * speed * driftFactor));
-
-    vel = forwardVel.add(sideVel);
-    vel.add(forward.clone().multiplyScalar(speed * dt * 2));
-
-    taxi.position.add(vel);
-
-    if (Math.abs(vel.dot(right)) > 0.05 && Math.abs(speed) > 0.1) {
-        const rearL = taxi.position.clone().add(new THREE.Vector3(-1.2,0.05,2.5).applyQuaternion(taxi.quaternion));
-        const rearR = taxi.position.clone().add(new THREE.Vector3(1.2,0.05,2.5).applyQuaternion(taxi.quaternion));
-        addSkid(rearL, forward);
-        addSkid(rearR, forward);
+      if (taxi.speed > 0) taxi.speed -= taxi.friction;
+      else if (taxi.speed < 0) taxi.speed += taxi.friction;
+      if (Math.abs(taxi.speed) < 0.02) taxi.speed = 0;
     }
 
+    if (taxi.speed > taxi.maxSpeed) taxi.speed = taxi.maxSpeed;
+    if (taxi.speed < -taxi.maxSpeed * 0.6) taxi.speed = -taxi.maxSpeed * 0.6;
+
+    if (taxi.speed !== 0) {
+      const dir = taxi.speed > 0 ? 1 : -1;
+      if (left) taxi.angle -= taxi.turnSpeed * dir;
+      if (right) taxi.angle += taxi.turnSpeed * dir;
+    }
+
+    taxi.x += Math.cos(taxi.angle) * taxi.speed;
+    taxi.y += Math.sin(taxi.angle) * taxi.speed;
+
+    // Keep taxi in world bounds
+    taxi.x = Math.max(0, Math.min(world.width, taxi.x));
+    taxi.y = Math.max(0, Math.min(world.height, taxi.y));
+  }
+
+  function distance(a, b) {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function updateJobs() {
+    if (passenger && !hasPassenger) {
+      if (distance(taxi, passenger) < 30) {
+        createDestination();
+        passenger = null;
+      }
+    } else if (hasPassenger && destination) {
+      if (distance(taxi, destination) < 35) {
+        cash += currentFare;
+        passenger = null;
+        destination = null;
+        hasPassenger = false;
+        currentFare = 0;
+        updateUI();
+        setTimeout(createPassenger, 600);
+      }
+    }
+  }
+
+  function updateCamera() {
+    camera.x = taxi.x - canvas.width / 2;
+    camera.y = taxi.y - canvas.height / 2;
+
+    camera.x = Math.max(0, Math.min(world.width - canvas.width, camera.x));
+    camera.y = Math.max(0, Math.min(world.height - canvas.height, camera.y));
+  }
+
+  function drawWorld() {
+    ctx.fillStyle = '#202020';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Roads grid
+    ctx.strokeStyle = '#2c2c2c';
+    ctx.lineWidth = 2;
+    const gridSize = 120;
+    for (let x = 0; x < world.width; x += gridSize) {
+      const sx = x - camera.x;
+      ctx.beginPath();
+      ctx.moveTo(sx, -camera.y);
+      ctx.lineTo(sx, world.height - camera.y);
+      ctx.stroke();
+    }
+    for (let y = 0; y < world.height; y += gridSize) {
+      const sy = y - camera.y;
+      ctx.beginPath();
+      ctx.moveTo(-camera.x, sy);
+      ctx.lineTo(world.width - camera.x, sy);
+      ctx.stroke();
+    }
+
+    // Buildings
+    ctx.fillStyle = '#333';
+    buildings.forEach(b => {
+      const sx = b.x - camera.x;
+      const sy = b.y - camera.y;
+      if (sx + b.w < 0 || sy + b.h < 0 || sx > canvas.width || sy > canvas.height) return;
+      ctx.fillRect(sx, sy, b.w, b.h);
+    });
+  }
+
+  function drawPassengerAndDestination() {
+    if (passenger) {
+      const sx = passenger.x - camera.x;
+      const sy = passenger.y - camera.y;
+      ctx.fillStyle = '#3cff3c';
+      ctx.beginPath();
+      ctx.arc(sx, sy, passenger.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#0b0';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('PASSENGER', sx, sy - 18);
+    }
+
+    if (destination) {
+      const sx = destination.x - camera.x;
+      const sy = destination.y - camera.y;
+      ctx.fillStyle = '#ff3c3c';
+      ctx.beginPath();
+      ctx.arc(sx, sy, destination.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#b00';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('DESTINATION', sx, sy - 18);
+    }
+  }
+
+  function drawTaxi() {
+    const sx = taxi.x - camera.x;
+    const sy = taxi.y - camera.y;
+
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(taxi.angle);
+
+    // Body
+    ctx.fillStyle = '#ffd800';
+    ctx.fillRect(-taxi.w / 2, -taxi.h / 2, taxi.w, taxi.h);
+
+    // Roof
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(-taxi.w / 4, -taxi.h / 2 + 2, taxi.w / 2, taxi.h / 2);
+
+    // "TAXI" sign
+    ctx.fillStyle = '#000';
+    ctx.font = '8px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('TAXI', 0, -2);
+
+    ctx.restore();
+  }
+
+  function drawMinimap() {
+    const mapSize = 160;
+    const padding = 10;
+    const x = canvas.width - mapSize - padding;
+    const y = canvas.height - mapSize - padding;
+
+    ctx.save();
+    ctx.globalAlpha = 0.8;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(x, y, mapSize, mapSize);
+
+    ctx.strokeStyle = '#555';
+    ctx.strokeRect(x, y, mapSize, mapSize);
+
+    const scaleX = mapSize / world.width;
+    const scaleY = mapSize / world.height;
+
+    // Buildings (tiny dots)
+    ctx.fillStyle = '#444';
+    buildings.forEach(b => {
+      const bx = x + b.x * scaleX;
+      const by = y + b.y * scaleY;
+      ctx.fillRect(bx, by, Math.max(1, b.w * scaleX), Math.max(1, b.h * scaleY));
+    });
+
+    // Passenger
+    if (passenger) {
+      ctx.fillStyle = '#3cff3c';
+      const px = x + passenger.x * scaleX;
+      const py = y + passenger.y * scaleY;
+      ctx.beginPath();
+      ctx.arc(px, py, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Destination
+    if (destination) {
+      ctx.fillStyle = '#ff3c3c';
+      const dx = x + destination.x * scaleX;
+      const dy = y + destination.y * scaleY;
+      ctx.beginPath();
+      ctx.arc(dx, dy, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Taxi
+    ctx.fillStyle = '#ffd800';
+    const tx = x + taxi.x * scaleX;
+    const ty = y + taxi.y * scaleY;
+    ctx.beginPath();
+    ctx.arc(tx, ty, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function loop() {
+    updateTaxi();
+    updateJobs();
     updateCamera();
-    renderer.render(scene, camera);
-}
 
-animate(performance.now());
+    drawWorld();
+    drawPassengerAndDestination();
+    drawTaxi();
+    drawMinimap();
 
-onresize = () => {
-    camera.aspect = innerWidth/innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
-};
+    requestAnimationFrame(loop);
+  }
 
+  loop();
+})();
 </script>
-
 </body>
 </html>
