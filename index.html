@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>3D Taxi Game</title>
+  <title>3D Taxi Drift Game</title>
   <style>
     html, body {
       margin: 0;
@@ -26,249 +26,199 @@
 </head>
 <body>
 <div id="info">
-  <div><b>3D Taxi</b></div>
-  <div>W/S: accelerate / brake</div>
-  <div>A/D: steer</div>
-  <div>Space: handbrake</div>
+  <b>3D Taxi Drift</b><br>
+  W/S = accelerate / brake<br>
+  A/D = steer<br>
+  Space = handbrake<br>
 </div>
 
 <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
 
 <script>
-  // --- Basic setup ---
+  // --- Scene setup ---
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x202030);
 
-  const camera = new THREE.PerspectiveCamera(
-    60,
-    window.innerWidth / window.innerHeight,
-    0.1,
-    1000
-  );
-
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   document.body.appendChild(renderer.domElement);
 
   // --- Lights ---
-  const ambient = new THREE.AmbientLight(0xffffff, 0.4);
-  scene.add(ambient);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+  const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+  dir.position.set(20, 40, 10);
+  scene.add(dir);
 
-  const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-  dirLight.position.set(20, 40, 10);
-  scene.add(dirLight);
-
-  // --- Ground (road plane) ---
-  const groundGeo = new THREE.PlaneGeometry(500, 500, 10, 10);
-  const groundMat = new THREE.MeshStandardMaterial({
-    color: 0x222222,
-    roughness: 1
-  });
-  const ground = new THREE.Mesh(groundGeo, groundMat);
+  // --- Ground ---
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(2000, 2000),
+    new THREE.MeshStandardMaterial({ color: 0x222222 })
+  );
   ground.rotation.x = -Math.PI / 2;
-  ground.receiveShadow = true;
   scene.add(ground);
 
-  // --- Simple city blocks (buildings) ---
-  const buildingMat = new THREE.MeshStandardMaterial({ color: 0x404060 });
+  // --- Buildings ---
   const buildingGeo = new THREE.BoxGeometry(10, 20, 10);
+  const buildingMat = new THREE.MeshStandardMaterial({ color: 0x404060 });
 
-  function addBuilding(x, z, hMult = 1) {
-    const b = new THREE.Mesh(
-      buildingGeo.clone().scale(1, hMult, 1),
-      buildingMat
-    );
-    b.position.set(x, 10 * hMult, z);
-    b.castShadow = true;
-    b.receiveShadow = true;
-    scene.add(b);
-  }
-
-  // Place buildings in a grid, leaving a rough “road” area in the middle
-  for (let i = -4; i <= 4; i++) {
-    for (let j = -4; j <= 4; j++) {
-      if (Math.abs(i) < 2 && Math.abs(j) < 2) continue; // keep center open
-      const x = i * 20;
-      const z = j * 20;
-      const hMult = 0.5 + Math.random() * 2.0;
-      addBuilding(x, z, hMult);
+  const spacing = 45; // MORE SPREAD OUT
+  for (let i = -6; i <= 6; i++) {
+    for (let j = -6; j <= 6; j++) {
+      if (Math.abs(i) < 2 && Math.abs(j) < 2) continue;
+      const h = 0.5 + Math.random() * 2.5;
+      const b = new THREE.Mesh(buildingGeo.clone().scale(1, h, 1), buildingMat);
+      b.position.set(i * spacing, 10 * h, j * spacing);
+      scene.add(b);
     }
   }
 
-  // --- Taxi model (simple box car) ---
-  const taxiGroup = new THREE.Group();
+  // --- Taxi model ---
+  const taxi = new THREE.Group();
 
-  // Body
-  const bodyGeo = new THREE.BoxGeometry(4, 1.2, 8);
-  const bodyMat = new THREE.MeshStandardMaterial({ color: 0xffd000 });
-  const body = new THREE.Mesh(bodyGeo, bodyMat);
-  body.position.y = 1.0;
-  taxiGroup.add(body);
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(4, 1.2, 8),
+    new THREE.MeshStandardMaterial({ color: 0xffd000 })
+  );
+  body.position.y = 1;
+  taxi.add(body);
 
-  // Roof
-  const roofGeo = new THREE.BoxGeometry(3, 1, 3.5);
-  const roofMat = new THREE.MeshStandardMaterial({ color: 0xfff5a0 });
-  const roof = new THREE.Mesh(roofGeo, roofMat);
+  const roof = new THREE.Mesh(
+    new THREE.BoxGeometry(3, 1, 3.5),
+    new THREE.MeshStandardMaterial({ color: 0xfff5a0 })
+  );
   roof.position.set(0, 1.8, -0.5);
-  taxiGroup.add(roof);
+  taxi.add(roof);
 
-  // Taxi sign
-  const signGeo = new THREE.BoxGeometry(1.5, 0.4, 0.8);
-  const signMat = new THREE.MeshStandardMaterial({ color: 0x000000 });
-  const sign = new THREE.Mesh(signGeo, signMat);
+  const sign = new THREE.Mesh(
+    new THREE.BoxGeometry(1.5, 0.4, 0.8),
+    new THREE.MeshStandardMaterial({ color: 0x000000 })
+  );
   sign.position.set(0, 2.4, -0.5);
-  taxiGroup.add(sign);
+  taxi.add(sign);
 
-  // Wheels (just cylinders)
+  // Wheels
   const wheelGeo = new THREE.CylinderGeometry(0.6, 0.6, 0.4, 16);
   const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
 
-  function makeWheel(x, z) {
+  function wheel(x, z) {
     const w = new THREE.Mesh(wheelGeo, wheelMat);
     w.rotation.z = Math.PI / 2;
     w.position.set(x, 0.5, z);
-    taxiGroup.add(w);
+    taxi.add(w);
     return w;
   }
 
-  const wheelFL = makeWheel(-1.5, -2.5);
-  const wheelFR = makeWheel(1.5, -2.5);
-  const wheelRL = makeWheel(-1.5, 2.5);
-  const wheelRR = makeWheel(1.5, 2.5);
+  const wFL = wheel(-1.5, -2.5);
+  const wFR = wheel(1.5, -2.5);
+  const wRL = wheel(-1.5, 2.5);
+  const wRR = wheel(1.5, 2.5);
 
-  taxiGroup.position.set(0, 0, 0);
-  scene.add(taxiGroup);
+  scene.add(taxi);
 
-  // --- Taxi physics-ish params ---
+  // --- Physics ---
   let speed = 0;
   let steering = 0;
   const maxSpeed = 0.6;
   const accel = 0.01;
-  const brakeDecel = 0.03;
   const friction = 0.005;
   const steeringSpeed = 0.03;
-  const maxSteering = 0.04;
+  const maxSteer = 0.04;
 
-  const keys = {
-    w: false,
-    s: false,
-    a: false,
-    d: false,
-    space: false
-  };
+  // Drift physics
+  let vel = new THREE.Vector3(0, 0, 0);
+  const driftFactor = 0.06;
+  const grip = 0.92;
 
-  window.addEventListener("keydown", (e) => {
-    if (e.code === "KeyW") keys.w = true;
-    if (e.code === "KeyS") keys.s = true;
-    if (e.code === "KeyA") keys.a = true;
-    if (e.code === "KeyD") keys.d = true;
-    if (e.code === "Space") keys.space = true;
+  const keys = { w:0, s:0, a:0, d:0, space:0 };
+
+  window.addEventListener("keydown", e => {
+    if (e.code === "KeyW") keys.w = 1;
+    if (e.code === "KeyS") keys.s = 1;
+    if (e.code === "KeyA") keys.a = 1;
+    if (e.code === "KeyD") keys.d = 1;
+    if (e.code === "Space") keys.space = 1;
   });
 
-  window.addEventListener("keyup", (e) => {
-    if (e.code === "KeyW") keys.w = false;
-    if (e.code === "KeyS") keys.s = false;
-    if (e.code === "KeyA") keys.a = false;
-    if (e.code === "KeyD") keys.d = false;
-    if (e.code === "Space") keys.space = false;
+  window.addEventListener("keyup", e => {
+    if (e.code === "KeyW") keys.w = 0;
+    if (e.code === "KeyS") keys.s = 0;
+    if (e.code === "KeyA") keys.a = 0;
+    if (e.code === "KeyD") keys.d = 0;
+    if (e.code === "Space") keys.space = 0;
   });
 
-  // --- Camera follow setup ---
-  // Camera will follow from behind and slightly above the taxi
+  // --- Camera follow ---
   function updateCamera() {
-    const offset = new THREE.Vector3(0, 6, 12); // relative to taxi
-    const worldOffset = offset.clone().applyQuaternion(taxiGroup.quaternion);
-    const camPos = taxiGroup.position.clone().add(worldOffset);
-    camera.position.lerp(camPos, 0.15); // smooth follow
-    camera.lookAt(taxiGroup.position.clone().add(new THREE.Vector3(0, 2, 0)));
+    const offset = new THREE.Vector3(0, 6, 12).applyQuaternion(taxi.quaternion);
+    const target = taxi.position.clone().add(offset);
+    camera.position.lerp(target, 0.15);
+    camera.lookAt(taxi.position.clone().add(new THREE.Vector3(0, 2, 0)));
   }
 
-  // --- Resize handling ---
+  // --- Main loop ---
+  let last = performance.now();
+  function animate(now) {
+    requestAnimationFrame(animate);
+    const dt = (now - last) / 16.67;
+    last = now;
+
+    // Acceleration
+    if (keys.w) speed += accel * dt;
+    else if (keys.s) speed -= accel * dt;
+    else {
+      if (speed > 0) speed -= friction * dt;
+      if (speed < 0) speed += friction * dt;
+    }
+
+    if (keys.space) speed *= 0.9;
+
+    speed = Math.max(-0.3, Math.min(maxSpeed, speed));
+
+    // Steering
+    if (keys.a) steering += steeringSpeed * dt;
+    else if (keys.d) steering -= steeringSpeed * dt;
+    else steering *= 0.9;
+
+    steering = Math.max(-maxSteer, Math.min(maxSteer, steering));
+
+    // Rotate taxi
+    taxi.rotation.y += steering * speed * dt * 2;
+
+    // Drift physics
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(taxi.quaternion);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(taxi.quaternion);
+
+    const targetVel = forward.clone().multiplyScalar(speed * dt * 2);
+
+    const forwardVel = forward.clone().multiplyScalar(vel.dot(forward));
+    let sideVel = right.clone().multiplyScalar(vel.dot(right));
+
+    sideVel.multiplyScalar(grip);
+    sideVel.add(right.clone().multiplyScalar(steering * speed * driftFactor));
+
+    vel = forwardVel.add(sideVel);
+
+    taxi.position.add(vel);
+
+    // Wheel spin
+    const spin = speed * dt * 5;
+    wFL.rotation.x += spin;
+    wFR.rotation.x += spin;
+    wRL.rotation.x += spin;
+    wRR.rotation.x += spin;
+
+    updateCamera();
+    renderer.render(scene, camera);
+  }
+
+  animate(performance.now());
+
   window.addEventListener("resize", () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
-
-  // --- Main loop ---
-  let lastTime = performance.now();
-
-  function animate(now) {
-    requestAnimationFrame(animate);
-    const dt = (now - lastTime) / 16.67; // ~60fps normalization
-    lastTime = now;
-
-    // Controls: acceleration / braking
-    if (keys.w) {
-      speed += accel * dt;
-    } else if (keys.s) {
-      speed -= accel * dt;
-    } else {
-      // natural friction
-      if (speed > 0) {
-        speed -= friction * dt;
-        if (speed < 0) speed = 0;
-      } else if (speed < 0) {
-        speed += friction * dt;
-        if (speed > 0) speed = 0;
-      }
-    }
-
-    // Handbrake
-    if (keys.space) {
-      if (speed > 0) {
-        speed -= brakeDecel * dt;
-        if (speed < 0) speed = 0;
-      } else if (speed < 0) {
-        speed += brakeDecel * dt;
-        if (speed > 0) speed = 0;
-      }
-    }
-
-    // Clamp speed
-    if (speed > maxSpeed) speed = maxSpeed;
-    if (speed < -maxSpeed * 0.5) speed = -maxSpeed * 0.5; // reverse slower
-
-    // Steering
-    if (keys.a) {
-      steering += steeringSpeed * dt;
-    } else if (keys.d) {
-      steering -= steeringSpeed * dt;
-    } else {
-      // auto-center steering
-      if (steering > 0) {
-        steering -= steeringSpeed * 0.5 * dt;
-        if (steering < 0) steering = 0;
-      } else if (steering < 0) {
-        steering += steeringSpeed * 0.5 * dt;
-        if (steering > 0) steering = 0;
-      }
-    }
-    // Clamp steering
-    steering = Math.max(-maxSteering, Math.min(maxSteering, steering));
-
-    // Rotate taxi based on steering and speed
-    taxiGroup.rotation.y += steering * speed * dt * 2.0;
-
-    // Move taxi forward in its local -Z direction
-    const forward = new THREE.Vector3(0, 0, -1);
-    forward.applyQuaternion(taxiGroup.quaternion);
-    taxiGroup.position.addScaledVector(forward, speed * dt * 2.0);
-
-    // Simple wheel spin
-    const wheelSpin = speed * 0.5 * dt * 10;
-    wheelFL.rotation.x += wheelSpin;
-    wheelFR.rotation.x += wheelSpin;
-    wheelRL.rotation.x += wheelSpin;
-    wheelRR.rotation.x += wheelSpin;
-
-    // Camera follow
-    updateCamera();
-
-    renderer.render(scene, camera);
-  }
-
-  animate(performance.now());
 </script>
 </body>
 </html>
