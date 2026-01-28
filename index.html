@@ -62,6 +62,10 @@
 </head>
 <body tabindex="0">
 
+<script>
+window.onload = () => document.body.focus();
+</script>
+
 <div id="info">
     <b>3D Taxi Drift</b><br>
     W/S = accelerate / brake<br>
@@ -72,11 +76,13 @@
 <div id="joystick"><div id="thumb"></div></div>
 <div id="driftBtn">DRIFT</div>
 
-<script src="three.min.js"></script>
+<!-- ⭐ FIXED: correct Three.js version (0.148.0) -->
+<script type="module">
+    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.148.0/build/three.module.js";
+    window.THREE = THREE;
+</script>
 
 <script>
-document.body.focus();
-
 // Scene
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x202030);
@@ -193,9 +199,7 @@ let steering = 0;
 let vel = new THREE.Vector3(0,0,0);
 
 const accel = 0.02;
-const friction = 0.005;
 const steerSpeed = 0.03;
-const maxSteer = 0.045;
 const driftFactor = 0.08;
 const grip = 0.9;
 
@@ -217,44 +221,6 @@ document.addEventListener("keyup", e => {
     if (e.code === "Space") keys.space = 0;
 });
 
-// Mobile controls
-const isMobile = /Mobi|Android|iPhone/i.test(navigator.userAgent);
-const joy = document.getElementById("joystick");
-const thumb = document.getElementById("thumb");
-const driftBtn = document.getElementById("driftBtn");
-
-let joyX = 0, joyY = 0;
-
-if (isMobile) {
-    joy.style.display = "block";
-    driftBtn.style.display = "flex";
-
-    joy.addEventListener("touchmove", e => {
-        const t = e.touches[0];
-        const rect = joy.getBoundingClientRect();
-        const cx = rect.left + rect.width/2;
-        const cy = rect.top + rect.height/2;
-
-        joyX = (t.clientX - cx) / 60;
-        joyY = (t.clientY - cy) / 60;
-
-        joyX = Math.max(-1, Math.min(1, joyX));
-        joyY = Math.max(-1, Math.min(1, joyY));
-
-        thumb.style.left = (45 + joyX*40) + "px";
-        thumb.style.top  = (45 + joyY*40) + "px";
-    });
-
-    joy.addEventListener("touchend", () => {
-        joyX = joyY = 0;
-        thumb.style.left = "45px";
-        thumb.style.top = "45px";
-    });
-
-    driftBtn.addEventListener("touchstart", () => keys.space = 1);
-    driftBtn.addEventListener("touchend", () => keys.space = 0);
-}
-
 // Camera follow
 function updateCamera() {
     const offset = new THREE.Vector3(0, 7, 14).applyQuaternion(taxi.quaternion);
@@ -270,8 +236,8 @@ function animate(now) {
     const dt = (now - last) / 16.67;
     last = now;
 
-    const forwardInput = isMobile ? -joyY : (keys.w - keys.s);
-    const steerInput = isMobile ? joyX : (keys.a - keys.d);
+    const forwardInput = (keys.w - keys.s);
+    const steerInput = (keys.a - keys.d);
 
     speed += forwardInput * accel * dt;
     speed *= keys.space ? 0.9 : 0.98;
