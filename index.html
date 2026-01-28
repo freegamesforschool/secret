@@ -2,394 +2,405 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Mini Taxi Boss (HTML Only)</title>
+<title>Raw WebGL 3D Drift</title>
 <style>
   html, body {
     margin: 0;
     padding: 0;
-    background: #111;
-    color: #fff;
-    font-family: Arial, sans-serif;
     overflow: hidden;
+    background: #000;
   }
-
-  #ui {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    z-index: 10;
-    font-size: 14px;
-    background: rgba(0,0,0,0.5);
-    padding: 8px 10px;
-    border-radius: 6px;
-  }
-
-  #ui span {
-    display: inline-block;
-    margin-right: 10px;
-  }
-
-  #help {
-    margin-top: 4px;
-    font-size: 12px;
-    opacity: 0.8;
-  }
-
   canvas {
     display: block;
-    background: #1b1b1b;
+    width: 100vw;
+    height: 100vh;
+  }
+  #hud {
+    position: fixed;
+    left: 10px;
+    top: 10px;
+    color: #fff;
+    font-family: system-ui, sans-serif;
+    font-size: 14px;
+    text-shadow: 0 0 4px #000;
+    pointer-events: none;
   }
 </style>
 </head>
 <body>
-<div id="ui">
-  <div>
-    <span>💰 Cash: <span id="cash">0</span></span>
-    <span>🚕 Fare: <span id="fare">0</span></span>
-    <span>🎯 Job: <span id="jobStatus">None</span></span>
-  </div>
-  <div id="help">
-    Controls: W/A/S/D or Arrow Keys to drive.  
-    Drive over a green passenger to pick up, then to the red marker to drop off.
-  </div>
-</div>
-<canvas id="game"></canvas>
-
+<canvas id="glcanvas"></canvas>
+<div id="hud">W/S: throttle | A/D: steer | Space: handbrake drift</div>
 <script>
-(function() {
-  const canvas = document.getElementById('game');
-  const ctx = canvas.getContext('2d');
+// ---------- Input ----------
+const keys = {};
+window.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+window.addEventListener("keyup",   e => keys[e.key.toLowerCase()] = false);
 
-  function resize() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+// ---------- WebGL setup ----------
+const canvas = document.getElementById("glcanvas");
+const gl = canvas.getContext("webgl");
+if (!gl) {
+  alert("WebGL not supported");
+}
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+window.addEventListener("resize", resize);
+resize();
+
+// ---------- Shaders ----------
+const vsSource = `
+attribute vec3 aPosition;
+attribute vec3 aColor;
+uniform mat4 uMVP;
+varying vec3 vColor;
+void main(void) {
+  gl_Position = uMVP * vec4(aPosition, 1.0);
+  vColor = aColor;
+}
+`;
+
+const fsSource = `
+precision mediump float;
+varying vec3 vColor;
+void main(void) {
+  gl_FragColor = vec4(vColor, 1.0);
+}
+`;
+
+function compileShader(type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    console.error(gl.getShaderInfoLog(shader));
+    gl.deleteShader(shader);
+    return null;
   }
-  window.addEventListener('resize', resize);
-  resize();
+  return shader;
+}
 
-  // UI elements
-  const cashEl = document.getElementById('cash');
-  const fareEl = document.getElementById('fare');
-  const jobStatusEl = document.getElementById('jobStatus');
+const vs = compileShader(gl.VERTEX_SHADER, vsSource);
+const fs = compileShader(gl.FRAGMENT_SHADER, fsSource);
 
-  // World settings
-  const world = {
-    width: 2000,
-    height: 2000
-  };
+const program = gl.createProgram();
+gl.attachShader(program, vs);
+gl.attachShader(program, fs);
+gl.linkProgram(program);
+if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+  console.error(gl.getProgramInfoLog(program));
+}
+gl.useProgram(program);
 
-  // Camera
-  const camera = {
-    x: 0,
-    y: 0
-  };
+const aPosition = gl.getAttribLocation(program, "aPosition");
+const aColor    = gl.getAttribLocation(program, "aColor");
+const uMVP      = gl.getUniformLocation(program, "uMVP");
 
-  // Taxi
-  const taxi = {
-    x: world.width / 2,
-    y: world.height / 2,
-    w: 40,
-    h: 20,
-    angle: 0,
-    speed: 0,
-    maxSpeed: 4,
-    accel: 0.15,
-    friction: 0.05,
-    turnSpeed: 0.06
-  };
+// ---------- Geometry ----------
+// Simple track: big plane + lane lines
+// Car: small box
 
-  // Player stats
-  let cash = 0;
-  let currentFare = 0;
+// Track plane (two triangles)
+const trackSize = 200.0;
+const trackVertices = [
+  //   x,      y,   z,    r, g, b
+  -trackSize, 0.0, -trackSize, 0.1, 0.1, 0.1,
+   trackSize, 0.0, -trackSize, 0.1, 0.1, 0.1,
+   trackSize, 0.0,  trackSize, 0.1, 0.1, 0.1,
+  -trackSize, 0.0, -trackSize, 0.1, 0.1, 0.1,
+   trackSize, 0.0,  trackSize, 0.1, 0.1, 0.1,
+  -trackSize, 0.0,  trackSize, 0.1, 0.1, 0.1,
+];
 
-  // Job system
-  let passenger = null;
-  let destination = null;
-  let hasPassenger = false;
+// Lane lines (simple strips along z)
+const laneVertices = [];
+const laneHalfWidth = 1.5;
+for (let i = -trackSize; i < trackSize; i += 5) {
+  const z1 = i;
+  const z2 = i + 2;
+  const x1 = -laneHalfWidth;
+  const x2 = -laneHalfWidth + 0.3;
+  const x3 = laneHalfWidth - 0.3;
+  const x4 = laneHalfWidth;
 
+  // left stripe
+  laneVertices.push(
+    x1, 0.01, z1, 1,1,1,
+    x2, 0.01, z1, 1,1,1,
+    x2, 0.01, z2, 1,1,1,
+    x1, 0.01, z1, 1,1,1,
+    x2, 0.01, z2, 1,1,1,
+    x1, 0.01, z2, 1,1,1,
+  );
+  // right stripe
+  laneVertices.push(
+    x3, 0.01, z1, 1,1,1,
+    x4, 0.01, z1, 1,1,1,
+    x4, 0.01, z2, 1,1,1,
+    x3, 0.01, z1, 1,1,1,
+    x4, 0.01, z2, 1,1,1,
+    x3, 0.01, z2, 1,1,1,
+  );
+}
+
+// Car box (centered at origin, y up)
+const carHalfW = 0.7;
+const carHalfL = 1.3;
+const carH = 0.4;
+const carVertices = [
+  // top
+  -carHalfW, carH, -carHalfL, 0.9,0.1,0.1,
+   carHalfW, carH, -carHalfL, 0.9,0.1,0.1,
+   carHalfW, carH,  carHalfL, 0.9,0.1,0.1,
+  -carHalfW, carH, -carHalfL, 0.9,0.1,0.1,
+   carHalfW, carH,  carHalfL, 0.9,0.1,0.1,
+  -carHalfW, carH,  carHalfL, 0.9,0.1,0.1,
+
+  // sides
+  -carHalfW, 0.0, -carHalfL, 0.7,0.0,0.0,
+   carHalfW, 0.0, -carHalfL, 0.7,0.0,0.0,
+   carHalfW, carH, -carHalfL, 0.7,0.0,0.0,
+  -carHalfW, 0.0, -carHalfL, 0.7,0.0,0.0,
+   carHalfW, carH, -carHalfL, 0.7,0.0,0.0,
+  -carHalfW, carH, -carHalfL, 0.7,0.0,0.0,
+
+  -carHalfW, 0.0,  carHalfL, 0.7,0.0,0.0,
+   carHalfW, 0.0,  carHalfL, 0.7,0.0,0.0,
+   carHalfW, carH,  carHalfL, 0.7,0.0,0.0,
+  -carHalfW, 0.0,  carHalfL, 0.7,0.0,0.0,
+   carHalfW, carH,  carHalfL, 0.7,0.0,0.0,
+  -carHalfW, carH,  carHalfL, 0.7,0.0,0.0,
+
+  -carHalfW, 0.0, -carHalfL, 0.6,0.0,0.0,
+  -carHalfW, 0.0,  carHalfL, 0.6,0.0,0.0,
+  -carHalfW, carH,  carHalfL, 0.6,0.0,0.0,
+  -carHalfW, 0.0, -carHalfL, 0.6,0.0,0.0,
+  -carHalfW, carH,  carHalfL, 0.6,0.0,0.0,
+  -carHalfW, carH, -carHalfL, 0.6,0.0,0.0,
+
+   carHalfW, 0.0, -carHalfL, 0.6,0.0,0.0,
+   carHalfW, 0.0,  carHalfL, 0.6,0.0,0.0,
+   carHalfW, carH,  carHalfL, 0.6,0.0,0.0,
+   carHalfW, 0.0, -carHalfL, 0.6,0.0,0.0,
+   carHalfW, carH,  carHalfL, 0.6,0.0,0.0,
+   carHalfW, carH, -carHalfL, 0.6,0.0,0.0,
+];
+
+function createBuffer(data) {
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
+  return buf;
+}
+
+const trackBuffer = createBuffer(trackVertices);
+const laneBuffer  = createBuffer(laneVertices);
+const carBuffer   = createBuffer(carVertices);
+
+// ---------- Matrices ----------
+function perspective(fovy, aspect, near, far) {
+  const f = 1.0 / Math.tan(fovy / 2);
+  const nf = 1 / (near - far);
+  const out = new Float32Array(16);
+  out[0] = f / aspect;
+  out[5] = f;
+  out[10] = (far + near) * nf;
+  out[11] = -1;
+  out[14] = (2 * far * near) * nf;
+  return out;
+}
+
+function lookAt(eye, center, up) {
+  const [ex, ey, ez] = eye;
+  const [cx, cy, cz] = center;
+  const [ux, uy, uz] = up;
+
+  let zx = ex - cx;
+  let zy = ey - cy;
+  let zz = ez - cz;
+  let len = Math.hypot(zx, zy, zz);
+  zx /= len; zy /= len; zz /= len;
+
+  let xx = uy * zz - uz * zy;
+  let xy = uz * zx - ux * zz;
+  let xz = ux * zy - uy * zx;
+  len = Math.hypot(xx, xy, xz);
+  xx /= len; xy /= len; xz /= len;
+
+  let yx = zy * xz - zz * xx;
+  let yy = zz * xx - zx * xz;
+  let yz = zx * xy - zy * xx;
+
+  const out = new Float32Array(16);
+  out[0] = xx; out[1] = yx; out[2] = zx; out[3] = 0;
+  out[4] = xy; out[5] = yy; out[6] = zy; out[7] = 0;
+  out[8] = xz; out[9] = yz; out[10] = zz; out[11] = 0;
+  out[12] = -(xx * ex + xy * ey + xz * ez);
+  out[13] = -(yx * ex + yy * ey + yz * ez);
+  out[14] = -(zx * ex + zy * ey + zz * ez);
+  out[15] = 1;
+  return out;
+}
+
+function multiply(a, b) {
+  const out = new Float32Array(16);
+  for (let i = 0; i < 4; ++i) {
+    const ai0 = a[i]; const ai1 = a[i+4]; const ai2 = a[i+8]; const ai3 = a[i+12];
+    out[i]    = ai0*b[0] + ai1*b[1] + ai2*b[2] + ai3*b[3];
+    out[i+4]  = ai0*b[4] + ai1*b[5] + ai2*b[6] + ai3*b[7];
+    out[i+8]  = ai0*b[8] + ai1*b[9] + ai2*b[10]+ ai3*b[11];
+    out[i+12] = ai0*b[12]+ ai1*b[13]+ ai2*b[14]+ ai3*b[15];
+  }
+  return out;
+}
+
+function translation(tx, ty, tz) {
+  const out = new Float32Array(16);
+  out[0]=1; out[5]=1; out[10]=1; out[15]=1;
+  out[12]=tx; out[13]=ty; out[14]=tz;
+  return out;
+}
+
+function rotationY(a) {
+  const c = Math.cos(a), s = Math.sin(a);
+  const out = new Float32Array(16);
+  out[0]= c; out[2]= s;
+  out[5]= 1;
+  out[8]=-s; out[10]=c;
+  out[15]=1;
+  return out;
+}
+
+// ---------- Car physics (drift) ----------
+let carPos = { x: 0, z: 0 };
+let carVel = { x: 0, z: 0 };
+let carYaw = 0;
+
+const maxSpeed = 40;
+const accel = 25;
+const brake = 40;
+const friction = 4;
+const steerStrength = 2.5;
+const driftGrip = 4;
+const handbrakeGrip = 1.0;
+
+let lastTime = performance.now();
+
+function update(dt) {
   // Input
-  const keys = {};
-  window.addEventListener('keydown', e => {
-    keys[e.key.toLowerCase()] = true;
-  });
-  window.addEventListener('keyup', e => {
-    keys[e.key.toLowerCase()] = false;
-  });
+  const forward = keys["w"] || keys["arrowup"];
+  const back    = keys["s"] || keys["arrowdown"];
+  const left    = keys["a"] || keys["arrowleft"];
+  const right   = keys["d"] || keys["arrowright"];
+  const handbrake = keys[" "];
 
-  function rand(min, max) {
-    return Math.random() * (max - min) + min;
-  }
+  // Speed along car forward axis
+  const forwardDir = { x: Math.sin(carYaw), z: Math.cos(carYaw) };
+  const velForward = carVel.x * forwardDir.x + carVel.z * forwardDir.z;
+  const velSide    = carVel.x * forwardDir.z - carVel.z * forwardDir.x;
 
-  // Generate simple "city" blocks (just rectangles as buildings)
-  const buildings = [];
-  for (let i = 0; i < 60; i++) {
-    const bw = rand(80, 200);
-    const bh = rand(80, 200);
-    const bx = rand(0, world.width - bw);
-    const by = rand(0, world.height - bh);
-    buildings.push({ x: bx, y: by, w: bw, h: bh });
-  }
+  let targetGrip = handbrake ? handbrakeGrip : driftGrip;
 
-  function createPassenger() {
-    passenger = {
-      x: rand(100, world.width - 100),
-      y: rand(100, world.height - 100),
-      r: 14
-    };
-    destination = null;
-    hasPassenger = false;
-    currentFare = 0;
-    updateUI();
-  }
+  let accelInput = 0;
+  if (forward) accelInput += accel;
+  if (back)    accelInput -= brake;
 
-  function createDestination() {
-    destination = {
-      x: rand(100, world.width - 100),
-      y: rand(100, world.height - 100),
-      r: 18
-    };
-    currentFare = Math.floor(rand(50, 200));
-    hasPassenger = true;
-    updateUI();
-  }
+  let speed = velForward + accelInput * dt;
+  speed = Math.max(-maxSpeed * 0.4, Math.min(maxSpeed, speed));
 
-  function updateUI() {
-    cashEl.textContent = cash;
-    fareEl.textContent = currentFare;
-    if (!passenger && !destination) {
-      jobStatusEl.textContent = 'None';
-    } else if (passenger && !hasPassenger) {
-      jobStatusEl.textContent = 'Pick up passenger';
-    } else if (hasPassenger && destination) {
-      jobStatusEl.textContent = 'Drive to destination';
-    }
-  }
+  // Steering affects yaw based on forward speed
+  let steer = 0;
+  if (left)  steer += 1;
+  if (right) steer -= 1;
+  carYaw += steer * steerStrength * dt * (speed / maxSpeed);
 
-  createPassenger();
+  // Lateral friction (drift)
+  const sideFriction = targetGrip * dt;
+  const newVelSide = velSide * Math.max(0, 1 - sideFriction);
 
-  function updateTaxi() {
-    const up = keys['w'] || keys['arrowup'];
-    const down = keys['s'] || keys['arrowdown'];
-    const left = keys['a'] || keys['arrowleft'];
-    const right = keys['d'] || keys['arrowright'];
+  // Recompose velocity
+  carVel.x = forwardDir.x * speed + forwardDir.z * newVelSide;
+  carVel.z = forwardDir.z * speed - forwardDir.x * newVelSide;
 
-    if (up) {
-      taxi.speed += taxi.accel;
-    } else if (down) {
-      taxi.speed -= taxi.accel;
-    } else {
-      if (taxi.speed > 0) taxi.speed -= taxi.friction;
-      else if (taxi.speed < 0) taxi.speed += taxi.friction;
-      if (Math.abs(taxi.speed) < 0.02) taxi.speed = 0;
-    }
+  // Global friction
+  carVel.x *= (1 - friction * dt * 0.1);
+  carVel.z *= (1 - friction * dt * 0.1);
 
-    if (taxi.speed > taxi.maxSpeed) taxi.speed = taxi.maxSpeed;
-    if (taxi.speed < -taxi.maxSpeed * 0.6) taxi.speed = -taxi.maxSpeed * 0.6;
+  carPos.x += carVel.x * dt;
+  carPos.z += carVel.z * dt;
 
-    if (taxi.speed !== 0) {
-      const dir = taxi.speed > 0 ? 1 : -1;
-      if (left) taxi.angle -= taxi.turnSpeed * dir;
-      if (right) taxi.angle += taxi.turnSpeed * dir;
-    }
+  // Keep roughly on track
+  const maxX = 6;
+  if (carPos.x > maxX) { carPos.x = maxX; carVel.x *= -0.3; }
+  if (carPos.x < -maxX){ carPos.x = -maxX; carVel.x *= -0.3; }
 
-    taxi.x += Math.cos(taxi.angle) * taxi.speed;
-    taxi.y += Math.sin(taxi.angle) * taxi.speed;
+  // Loop z to stay near origin visually
+  const loopZ = 150;
+  if (carPos.z > loopZ)  carPos.z -= loopZ*2;
+  if (carPos.z < -loopZ) carPos.z += loopZ*2;
+}
 
-    // Keep taxi in world bounds
-    taxi.x = Math.max(0, Math.min(world.width, taxi.x));
-    taxi.y = Math.max(0, Math.min(world.height, taxi.y));
-  }
+// ---------- Render ----------
+function drawMesh(buffer, vertexCount, modelMatrix) {
+  const aspect = canvas.width / canvas.height;
+  const proj = perspective(Math.PI / 3, aspect, 0.1, 500.0);
 
-  function distance(a, b) {
-    const dx = a.x - b.x;
-    const dy = a.y - b.y;
-    return Math.sqrt(dx * dx + dy * dy);
-  }
+  const camDist = 6;
+  const camHeight = 3;
+  const camTarget = [carPos.x, 0.5, carPos.z];
+  const camPos = [
+    carPos.x - Math.sin(carYaw) * camDist,
+    camHeight,
+    carPos.z - Math.cos(carYaw) * camDist,
+  ];
+  const view = lookAt(camPos, camTarget, [0,1,0]);
 
-  function updateJobs() {
-    if (passenger && !hasPassenger) {
-      if (distance(taxi, passenger) < 30) {
-        createDestination();
-        passenger = null;
-      }
-    } else if (hasPassenger && destination) {
-      if (distance(taxi, destination) < 35) {
-        cash += currentFare;
-        passenger = null;
-        destination = null;
-        hasPassenger = false;
-        currentFare = 0;
-        updateUI();
-        setTimeout(createPassenger, 600);
-      }
-    }
-  }
+  const vp = multiply(proj, view);
+  const mvp = multiply(vp, modelMatrix);
 
-  function updateCamera() {
-    camera.x = taxi.x - canvas.width / 2;
-    camera.y = taxi.y - canvas.height / 2;
+  gl.uniformMatrix4fv(uMVP, false, mvp);
 
-    camera.x = Math.max(0, Math.min(world.width - canvas.width, camera.x));
-    camera.y = Math.max(0, Math.min(world.height - canvas.height, camera.y));
-  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.enableVertexAttribArray(aPosition);
+  gl.enableVertexAttribArray(aColor);
+  const stride = 6 * 4;
+  gl.vertexAttribPointer(aPosition, 3, gl.FLOAT, false, stride, 0);
+  gl.vertexAttribPointer(aColor,    3, gl.FLOAT, false, stride, 3*4);
 
-  function drawWorld() {
-    ctx.fillStyle = '#202020';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
+}
 
-    // Roads grid
-    ctx.strokeStyle = '#2c2c2c';
-    ctx.lineWidth = 2;
-    const gridSize = 120;
-    for (let x = 0; x < world.width; x += gridSize) {
-      const sx = x - camera.x;
-      ctx.beginPath();
-      ctx.moveTo(sx, -camera.y);
-      ctx.lineTo(sx, world.height - camera.y);
-      ctx.stroke();
-    }
-    for (let y = 0; y < world.height; y += gridSize) {
-      const sy = y - camera.y;
-      ctx.beginPath();
-      ctx.moveTo(-camera.x, sy);
-      ctx.lineTo(world.width - camera.x, sy);
-      ctx.stroke();
-    }
+function render() {
+  const now = performance.now();
+  const dt = Math.min(0.05, (now - lastTime) / 1000);
+  lastTime = now;
 
-    // Buildings
-    ctx.fillStyle = '#333';
-    buildings.forEach(b => {
-      const sx = b.x - camera.x;
-      const sy = b.y - camera.y;
-      if (sx + b.w < 0 || sy + b.h < 0 || sx > canvas.width || sy > canvas.height) return;
-      ctx.fillRect(sx, sy, b.w, b.h);
-    });
-  }
+  update(dt);
 
-  function drawPassengerAndDestination() {
-    if (passenger) {
-      const sx = passenger.x - camera.x;
-      const sy = passenger.y - camera.y;
-      ctx.fillStyle = '#3cff3c';
-      ctx.beginPath();
-      ctx.arc(sx, sy, passenger.r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#0b0';
-      ctx.font = '12px Arial';
-      ctx.textAlign = 'center';
-      ctx.fillText('PASSENGER', sx, sy - 18);
-    }
+  gl.enable(gl.DEPTH_TEST);
+  gl.clearColor(0.02, 0.02, 0.05, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-    if (destination) {
-      const sx = destination.x - camera.x;
-      const sy = destination.y - camera.y;
-      ctx.fillStyle = '#ff3c3c';
-      ctx.beginPath();
-      ctx.arc(sx, sy, destination.r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#b00';
-      ctx.font = '12px Arial';
-      ctx.textAlign = 'center';
-      ctx.fillText('DESTINATION', sx, sy - 18);
-    }
-  }
+  // Track
+  const trackModel = translation(0, 0, 0);
+  drawMesh(trackBuffer, trackVertices.length / 6, trackModel);
 
-  function drawTaxi() {
-    const sx = taxi.x - camera.x;
-    const sy = taxi.y - camera.y;
+  // Lane lines
+  const laneModel = translation(0, 0, 0);
+  drawMesh(laneBuffer, laneVertices.length / 6, laneModel);
 
-    ctx.save();
-    ctx.translate(sx, sy);
-    ctx.rotate(taxi.angle);
+  // Car
+  const carT = translation(carPos.x, 0, carPos.z);
+  const carR = rotationY(carYaw);
+  const carM = multiply(carT, carR);
+  drawMesh(carBuffer, carVertices.length / 6, carM);
 
-    // Body
-    ctx.fillStyle = '#ffd800';
-    ctx.fillRect(-taxi.w / 2, -taxi.h / 2, taxi.w, taxi.h);
-
-    // Roof
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(-taxi.w / 4, -taxi.h / 2 + 2, taxi.w / 2, taxi.h / 2);
-
-    // "TAXI" sign
-    ctx.fillStyle = '#000';
-    ctx.font = '8px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText('TAXI', 0, -2);
-
-    ctx.restore();
-  }
-
-  function drawMinimap() {
-    const mapSize = 160;
-    const padding = 10;
-    const x = canvas.width - mapSize - padding;
-    const y = canvas.height - mapSize - padding;
-
-    ctx.save();
-    ctx.globalAlpha = 0.8;
-    ctx.fillStyle = '#000';
-    ctx.fillRect(x, y, mapSize, mapSize);
-
-    ctx.strokeStyle = '#555';
-    ctx.strokeRect(x, y, mapSize, mapSize);
-
-    const scaleX = mapSize / world.width;
-    const scaleY = mapSize / world.height;
-
-    // Buildings (tiny dots)
-    ctx.fillStyle = '#444';
-    buildings.forEach(b => {
-      const bx = x + b.x * scaleX;
-      const by = y + b.y * scaleY;
-      ctx.fillRect(bx, by, Math.max(1, b.w * scaleX), Math.max(1, b.h * scaleY));
-    });
-
-    // Passenger
-    if (passenger) {
-      ctx.fillStyle = '#3cff3c';
-      const px = x + passenger.x * scaleX;
-      const py = y + passenger.y * scaleY;
-      ctx.beginPath();
-      ctx.arc(px, py, 3, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Destination
-    if (destination) {
-      ctx.fillStyle = '#ff3c3c';
-      const dx = x + destination.x * scaleX;
-      const dy = y + destination.y * scaleY;
-      ctx.beginPath();
-      ctx.arc(dx, dy, 3, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Taxi
-    ctx.fillStyle = '#ffd800';
-    const tx = x + taxi.x * scaleX;
-    const ty = y + taxi.y * scaleY;
-    ctx.beginPath();
-    ctx.arc(tx, ty, 4, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.restore();
-  }
-
-  function loop() {
-    updateTaxi();
-    updateJobs();
-    updateCamera();
-
-    drawWorld();
-    drawPassengerAndDestination();
-    drawTaxi();
-    drawMinimap();
-
-    requestAnimationFrame(loop);
-  }
-
-  loop();
-})();
+  requestAnimationFrame(render);
+}
+render();
 </script>
 </body>
 </html>
