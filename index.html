@@ -1,67 +1,27 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Pure CSS 3D Taxi Drift</title>
+<title>3D Taxi Drift</title>
 <style>
     html, body {
         margin: 0;
         padding: 0;
         overflow: hidden;
-        background: #111;
+        background: #000;
         touch-action: none;
     }
-
-    #camera {
-        width: 100vw;
-        height: 100vh;
-        perspective: 900px;
-        overflow: hidden;
-        position: relative;
-    }
-
-    #world {
-        width: 1px;
-        height: 1px;
-        transform-style: preserve-3d;
+    #info {
         position: absolute;
-        left: 50%;
-        top: 50%;
+        top: 10px;
+        left: 10px;
+        color: #fff;
+        font-family: sans-serif;
+        background: rgba(0,0,0,0.4);
+        padding: 6px 10px;
+        border-radius: 4px;
+        z-index: 10;
     }
-
-    .road {
-        position: absolute;
-        width: 2000px;
-        height: 40px;
-        background: #333;
-        transform-style: preserve-3d;
-    }
-
-    .building {
-        position: absolute;
-        width: 80px;
-        height: 80px;
-        background: #555;
-        transform-style: preserve-3d;
-    }
-
-    #taxi {
-        width: 40px;
-        height: 80px;
-        background: yellow;
-        position: absolute;
-        transform-style: preserve-3d;
-    }
-
-    .skid {
-        width: 6px;
-        height: 20px;
-        background: rgba(0,0,0,0.6);
-        position: absolute;
-        transform-style: preserve-3d;
-    }
-
-    /* Mobile controls */
     #joystick {
         position: absolute;
         left: 20px;
@@ -71,8 +31,8 @@
         border-radius: 50%;
         border: 2px solid #fff5;
         display: none;
+        z-index: 20;
     }
-
     #thumb {
         width: 60px;
         height: 60px;
@@ -82,7 +42,6 @@
         left: 45px;
         top: 45px;
     }
-
     #driftBtn {
         position: absolute;
         right: 20px;
@@ -97,80 +56,168 @@
         display: none;
         justify-content: center;
         align-items: center;
+        z-index: 20;
     }
 </style>
 </head>
-<body>
+<body tabindex="0">
 
-<div id="camera">
-    <div id="world"></div>
+<div id="info">
+    <b>3D Taxi Drift</b><br>
+    W/S = accelerate / brake<br>
+    A/D = steer<br>
+    Space = drift
 </div>
 
 <div id="joystick"><div id="thumb"></div></div>
 <div id="driftBtn">DRIFT</div>
 
+<script src="three.min.js"></script>
+
 <script>
-const world = document.getElementById("world");
+document.body.focus();
 
-// --- CITY LAYOUT ---
-for (let i = -5; i <= 5; i++) {
-    let road = document.createElement("div");
-    road.className = "road";
-    road.style.transform = `translateX(-1000px) translateZ(${i*200}px) rotateX(90deg)`;
-    world.appendChild(road);
+// Scene
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x202030);
 
-    road = document.createElement("div");
-    road.className = "road";
-    road.style.transform = `translateZ(-1000px) translateX(${i*200}px) rotateX(90deg) rotateZ(90deg)`;
-    world.appendChild(road);
+// Camera
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 2000);
+
+// Renderer
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// Lights
+scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+dir.position.set(40, 80, 20);
+scene.add(dir);
+
+// Ground
+const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(3000, 3000),
+    new THREE.MeshStandardMaterial({ color: 0x222222 })
+);
+ground.rotation.x = -Math.PI/2;
+scene.add(ground);
+
+// Roads
+const roadMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+const roadWidth = 20;
+const blockSize = 120;
+
+for (let i = -10; i <= 10; i++) {
+    const v = new THREE.Mesh(new THREE.PlaneGeometry(roadWidth, 3000), roadMat);
+    v.rotation.x = -Math.PI/2;
+    v.position.x = i * blockSize;
+    scene.add(v);
+
+    const h = new THREE.Mesh(new THREE.PlaneGeometry(3000, roadWidth), roadMat);
+    h.rotation.x = -Math.PI/2;
+    h.position.z = i * blockSize;
+    scene.add(h);
 }
 
 // Buildings
-for (let x = -5; x <= 5; x++) {
-    for (let z = -5; z <= 5; z++) {
+const buildingGeo = new THREE.BoxGeometry(40, 80, 40);
+const buildingMat = new THREE.MeshStandardMaterial({ color: 0x505070 });
+
+for (let x = -8; x <= 8; x++) {
+    for (let z = -8; z <= 8; z++) {
         if (Math.abs(x) < 2 && Math.abs(z) < 2) continue;
-        const b = document.createElement("div");
-        b.className = "building";
-        b.style.transform = `translateX(${x*200}px) translateZ(${z*200}px) translateY(-80px)`;
-        world.appendChild(b);
+        const b = new THREE.Mesh(buildingGeo, buildingMat);
+        b.position.set(x * blockSize, 40, z * blockSize);
+        scene.add(b);
     }
 }
 
-// --- TAXI ---
-const taxi = document.createElement("div");
-taxi.id = "taxi";
-world.appendChild(taxi);
+// Taxi
+const taxi = new THREE.Group();
 
-// --- PHYSICS ---
-let posX = 0, posZ = 0, rotY = 0;
-let speed = 0, steering = 0;
-let velX = 0, velZ = 0;
+const body = new THREE.Mesh(
+    new THREE.BoxGeometry(4, 1.2, 8),
+    new THREE.MeshStandardMaterial({ color: 0xffd000 })
+);
+body.position.y = 1;
+taxi.add(body);
 
-const accel = 0.4;
-const friction = 0.1;
-const steerSpeed = 2;
-const driftFactor = 0.15;
-const grip = 0.85;
+const roof = new THREE.Mesh(
+    new THREE.BoxGeometry(3, 1, 3.5),
+    new THREE.MeshStandardMaterial({ color: 0xfff5a0 })
+);
+roof.position.set(0, 1.8, -0.5);
+taxi.add(roof);
 
-// --- INPUT ---
-const keys = { w:0, s:0, a:0, d:0, drift:0 };
+const sign = new THREE.Mesh(
+    new THREE.BoxGeometry(1.5, 0.4, 0.8),
+    new THREE.MeshStandardMaterial({ color: 0x000000 })
+);
+sign.position.set(0, 2.4, -0.5);
+taxi.add(sign);
+
+scene.add(taxi);
+
+// Skid marks
+const skidGroup = new THREE.Group();
+scene.add(skidGroup);
+
+const skidMat = new THREE.MeshBasicMaterial({
+    color: 0x000000,
+    transparent: true,
+    opacity: 0.5
+});
+const skidGeo = new THREE.PlaneGeometry(0.4, 1.5);
+const skidPool = [];
+const maxSkids = 300;
+
+function addSkid(pos, dir) {
+    let s;
+    if (skidPool.length < maxSkids) {
+        s = new THREE.Mesh(skidGeo, skidMat);
+        s.rotation.x = -Math.PI/2;
+        skidGroup.add(s);
+        skidPool.push(s);
+    } else {
+        s = skidPool.shift();
+        skidPool.push(s);
+    }
+    s.position.copy(pos);
+    s.rotation.y = Math.atan2(dir.x, dir.z);
+}
+
+// Physics
+let speed = 0;
+let steering = 0;
+let vel = new THREE.Vector3(0,0,0);
+
+const accel = 0.02;
+const friction = 0.005;
+const steerSpeed = 0.03;
+const maxSteer = 0.045;
+const driftFactor = 0.08;
+const grip = 0.9;
+
+// Input
+const keys = { w:0, s:0, a:0, d:0, space:0 };
 
 document.addEventListener("keydown", e => {
-    if (e.key === "w") keys.w = 1;
-    if (e.key === "s") keys.s = 1;
-    if (e.key === "a") keys.a = 1;
-    if (e.key === "d") keys.d = 1;
-    if (e.key === " ") keys.drift = 1;
+    if (e.code === "KeyW") keys.w = 1;
+    if (e.code === "KeyS") keys.s = 1;
+    if (e.code === "KeyA") keys.a = 1;
+    if (e.code === "KeyD") keys.d = 1;
+    if (e.code === "Space") keys.space = 1;
 });
 document.addEventListener("keyup", e => {
-    if (e.key === "w") keys.w = 0;
-    if (e.key === "s") keys.s = 0;
-    if (e.key === "a") keys.a = 0;
-    if (e.key === "d") keys.d = 0;
-    if (e.key === " ") keys.drift = 0;
+    if (e.code === "KeyW") keys.w = 0;
+    if (e.code === "KeyS") keys.s = 0;
+    if (e.code === "KeyA") keys.a = 0;
+    if (e.code === "KeyD") keys.d = 0;
+    if (e.code === "Space") keys.space = 0;
 });
 
-// --- MOBILE DETECTION ---
+// Mobile controls
 const isMobile = /Mobi|Android|iPhone/i.test(navigator.userAgent);
 const joy = document.getElementById("joystick");
 const thumb = document.getElementById("thumb");
@@ -204,62 +251,68 @@ if (isMobile) {
         thumb.style.top = "45px";
     });
 
-    driftBtn.addEventListener("touchstart", () => keys.drift = 1);
-    driftBtn.addEventListener("touchend", () => keys.drift = 0);
+    driftBtn.addEventListener("touchstart", () => keys.space = 1);
+    driftBtn.addEventListener("touchend", () => keys.space = 0);
 }
 
-// --- SKID MARKS ---
-function addSkid(x, z, angle) {
-    const s = document.createElement("div");
-    s.className = "skid";
-    s.style.transform =
-        `translateX(${x}px) translateZ(${z}px) rotateY(${angle}deg)`;
-    world.appendChild(s);
-    setTimeout(() => s.remove(), 2000);
+// Camera follow
+function updateCamera() {
+    const offset = new THREE.Vector3(0, 7, 14).applyQuaternion(taxi.quaternion);
+    const target = taxi.position.clone().add(offset);
+    camera.position.lerp(target, 0.15);
+    camera.lookAt(taxi.position.clone().add(new THREE.Vector3(0,2,0)));
 }
 
-// --- GAME LOOP ---
-function loop() {
-    // Input mapping
-    const forward = isMobile ? -joyY : (keys.w - keys.s);
-    const turn = isMobile ? joyX : (keys.a - keys.d);
+// Main loop
+let last = performance.now();
+function animate(now) {
+    requestAnimationFrame(animate);
+    const dt = (now - last) / 16.67;
+    last = now;
 
-    // Speed
-    speed += forward * accel;
-    speed *= (keys.drift ? 0.95 : 0.9);
+    const forwardInput = isMobile ? -joyY : (keys.w - keys.s);
+    const steerInput = isMobile ? joyX : (keys.a - keys.d);
 
-    // Steering
-    steering = turn * steerSpeed;
+    speed += forwardInput * accel * dt;
+    speed *= keys.space ? 0.9 : 0.98;
 
-    // Rotation
-    rotY += steering * (speed/10);
+    steering = steerInput * steerSpeed;
 
-    // Drift physics
-    const rad = rotY * Math.PI/180;
-    const fx = Math.sin(rad);
-    const fz = Math.cos(rad);
+    taxi.rotation.y += steering * speed * dt * 2;
 
-    let targetVX = fx * speed;
-    let targetVZ = fz * speed;
+    const forward = new THREE.Vector3(0,0,-1).applyQuaternion(taxi.quaternion);
+    const right = new THREE.Vector3(1,0,0).applyQuaternion(taxi.quaternion);
 
-    velX = velX * grip + targetVX * (1-grip);
-    velZ = velZ * grip + targetVZ * (1-grip);
+    const forwardVel = forward.clone().multiplyScalar(vel.dot(forward));
+    let sideVel = right.clone().multiplyScalar(vel.dot(right));
 
-    posX += velX;
-    posZ += velZ;
+    sideVel.multiplyScalar(grip);
+    sideVel.add(right.clone().multiplyScalar(steering * speed * driftFactor));
 
-    // Skid marks
-    if (Math.abs(steering) > 0.5 && Math.abs(speed) > 1) {
-        addSkid(posX - fx*20, posZ - fz*20, rotY);
+    vel = forwardVel.add(sideVel);
+    vel.add(forward.clone().multiplyScalar(speed * dt * 2));
+
+    taxi.position.add(vel);
+
+    if (Math.abs(vel.dot(right)) > 0.05 && Math.abs(speed) > 0.1) {
+        const rearL = taxi.position.clone().add(new THREE.Vector3(-1.2,0.05,2.5).applyQuaternion(taxi.quaternion));
+        const rearR = taxi.position.clone().add(new THREE.Vector3(1.2,0.05,2.5).applyQuaternion(taxi.quaternion));
+        addSkid(rearL, forward);
+        addSkid(rearR, forward);
     }
 
-    // Apply transforms
-    world.style.transform =
-        `translateX(${-posX}px) translateZ(${-posZ}px) rotateY(${rotY}deg)`;
-
-    requestAnimationFrame(loop);
+    updateCamera();
+    renderer.render(scene, camera);
 }
-loop();
+
+animate(performance.now());
+
+onresize = () => {
+    camera.aspect = innerWidth/innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+};
 </script>
+
 </body>
 </html>
