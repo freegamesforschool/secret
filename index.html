@@ -1,300 +1,291 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Raw WebGL 3D Taxi</title>
-<style>
-  html,body{margin:0;padding:0;overflow:hidden;background:#000;font-family:sans-serif}
-  #hud{position:absolute;top:10px;left:10px;color:#fff;background:rgba(0,0,0,.6);padding:8px 12px;border-radius:4px;font-size:14px}
-</style>
+  <meta charset="UTF-8" />
+  <title>3D Taxi Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #111;
+      touch-action: none;
+      font-family: sans-serif;
+    }
+    #joystick-container {
+      position: fixed;
+      left: 10px;
+      bottom: 10px;
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      border: 2px solid #555;
+      box-sizing: border-box;
+      touch-action: none;
+      display: none; /* shown on touch devices */
+    }
+    #joystick {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 50px;
+      height: 50px;
+      margin-left: -25px;
+      margin-top: -25px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.4);
+      touch-action: none;
+    }
+    #drift-btn {
+      position: fixed;
+      right: 10px;
+      bottom: 30px;
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      border: none;
+      background: rgba(255, 215, 0, 0.8);
+      color: #000;
+      font-weight: bold;
+      font-size: 16px;
+      display: none; /* shown on touch devices */
+      touch-action: none;
+    }
+    #hint {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      color: #fff;
+      font-size: 14px;
+      background: rgba(0,0,0,0.4);
+      padding: 6px 10px;
+      border-radius: 4px;
+    }
+  </style>
 </head>
 <body>
-<canvas id="gl"></canvas>
-<div id="hud">
-  <b>RAW WEBGL 3D TAXI</b><br>
-  W/S accelerate • A/D steer<br>
-  Passengers: <span id="score">0</span>
-</div>
+  <div id="hint">
+    PC: WASD to move, Left Shift to drift<br>
+    Mobile: Joystick + Drift button
+  </div>
+  <div id="joystick-container">
+    <div id="joystick"></div>
+  </div>
+  <button id="drift-btn">DRIFT</button>
 
-<script>
-// ---------- canvas ----------
-const canvas = document.getElementById("gl");
-function resize(){canvas.width=innerWidth;canvas.height=innerHeight}
-resize(); onresize=resize;
-const gl = canvas.getContext("webgl");
+  <!-- Three.js CDN -->
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
 
-// ---------- shaders ----------
-const vsSrc = `
-attribute vec3 aPos;
-attribute vec3 aCol;
-uniform mat4 uMVP;
-varying vec3 vCol;
-void main(){
-  gl_Position = uMVP * vec4(aPos,1.0);
-  vCol = aCol;
-}`;
-const fsSrc = `
-precision mediump float;
-varying vec3 vCol;
-void main(){ gl_FragColor = vec4(vCol,1.0); }`;
+  <script>
+    // Basic Three.js setup
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x202020);
 
-function compile(type,src){
-  const s=gl.createShader(type);
-  gl.shaderSource(s,src);
-  gl.compileShader(s);
-  return s;
-}
-const prog=gl.createProgram();
-gl.attachShader(prog,compile(gl.VERTEX_SHADER,vsSrc));
-gl.attachShader(prog,compile(gl.FRAGMENT_SHADER,fsSrc));
-gl.linkProgram(prog);
-gl.useProgram(prog);
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 8, -15);
+    camera.lookAt(0, 0, 0);
 
-// ---------- mat4 utils ----------
-function ident(){return [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]}
-function mul(a,b){
-  const o=new Array(16);
-  for(let i=0;i<4;i++)
-    for(let j=0;j<4;j++)
-      o[i*4+j]=a[i*4]*b[j]+a[i*4+1]*b[4+j]+a[i*4+2]*b[8+j]+a[i*4+3]*b[12+j];
-  return o;
-}
-function trans(m,x,y,z){const t=ident();t[12]=x;t[13]=y;t[14]=z;return mul(m,t)}
-function scale(m,x,y,z){const s=ident();s[0]=x;s[5]=y;s[10]=z;return mul(m,s)}
-function rotY(m,a){
-  const c=Math.cos(a),s=Math.sin(a);
-  return mul(m,[c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]);
-}
-function perspective(fov,asp,n,f){
-  const t=1/Math.tan(fov/2),o=new Array(16);
-  o[0]=t/asp;o[5]=t;o[10]=(f+n)/(n-f);o[11]=-1;o[14]=(2*f*n)/(n-f);
-  return o;
-}
-function lookAt(e,c,u){
-  let [ex,ey,ez]=e,[cx,cy,cz]=c,[ux,uy,uz]=u;
-  let zx=ex-cx,zy=ey-cy,zz=ez-cz;
-  let l=Math.hypot(zx,zy,zz);zx/=l;zy/=l;zz/=l;
-  let xx=uy*zz-uz*zy,xy=uz*zx-ux*zz,xz=ux*zy-uy*zx;
-  l=Math.hypot(xx,xy,xz);xx/=l;xy/=l;xz/=l;
-  let yx=zy*xz-zz*xy,yy=zz*xx-zx*xz,yz=zx*xy-zy*xx;
-  l=Math.hypot(yx,yy,yz);yx/=l;yy/=l;yz/=l;
-  const o=ident();
-  o[0]=xx;o[1]=yx;o[2]=zx;
-  o[4]=xy;o[5]=yy;o[6]=zy;
-  o[8]=xz;o[9]=yz;o[10]=zz;
-  o[12]=-(xx*ex+xy*ey+xz*ez);
-  o[13]=-(yx*ex+yy*ey+yz*ez);
-  o[14]=-(zx*ex+zy*ey+zz*ez);
-  return o;
-}
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
 
-// ---------- geometry ----------
-function cube(size,color){
-  const s=size/2,[r,g,b]=color;
-  const p=[
-    -s,-s, s,  s,-s, s,  s, s, s, -s, s, s,
-    -s,-s,-s, -s, s,-s,  s, s,-s,  s,-s,-s,
-    -s, s,-s, -s, s, s,  s, s, s,  s, s,-s,
-    -s,-s,-s,  s,-s,-s,  s,-s, s, -s,-s, s,
-     s,-s,-s,  s, s,-s,  s, s, s,  s,-s, s,
-    -s,-s,-s, -s,-s, s, -s, s, s, -s, s,-s
-  ];
-  const idx=[
-    0,1,2,0,2,3, 4,5,6,4,6,7,
-    8,9,10,8,10,11, 12,13,14,12,14,15,
-    16,17,18,16,18,19, 20,21,22,20,22,23
-  ];
-  const col=[];
-  for(let i=0;i<24;i++) col.push(r,g,b);
-  return {p,idx,col};
-}
-function ground(size){
-  const s=size/2;
-  const p=[-s,0,-s, s,0,-s, s,0,s, -s,0,s];
-  const idx=[0,1,2,0,2,3];
-  const col=[];
-  for(let i=0;i<4;i++) col.push(0.12,0.12,0.12);
-  return {p,idx,col};
-}
-function grid(size,step){
-  const lines=[];
-  for(let x=-size;x<=size;x+=step){
-    lines.push(x,0,-size, x,0,size);
-  }
-  for(let z=-size;z<=size;z+=step){
-    lines.push(-size,0,z, size,0,z);
-  }
-  const col=[];
-  for(let i=0;i<lines.length/3;i++) col.push(0.2,0.2,0.2);
-  return {p:lines,idx:null,col};
-}
-function build(m,mode){
-  const o={mode};
-  o.p=gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER,o.p);
-  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(m.p),gl.STATIC_DRAW);
+    // Lights
+    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambient);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(10, 20, 10);
+    scene.add(dirLight);
 
-  o.c=gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER,o.c);
-  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(m.col),gl.STATIC_DRAW);
+    // Ground
+    const groundGeo = new THREE.PlaneGeometry(200, 200);
+    const groundMat = new THREE.MeshPhongMaterial({ color: 0x303030 });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    scene.add(ground);
 
-  if(m.idx){
-    o.i=gl.createBuffer();
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,o.i);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint16Array(m.idx),gl.STATIC_DRAW);
-    o.count=m.idx.length;
-  }else{
-    o.count=m.p.length/3;
-  }
-  return o;
-}
+    // Taxi (yellow rectangle)
+    const taxiGeo = new THREE.BoxGeometry(2, 1, 4);
+    const taxiMat = new THREE.MeshPhongMaterial({ color: 0xffff00 });
+    const taxi = new THREE.Mesh(taxiGeo, taxiMat);
+    taxi.position.y = 0.5;
+    scene.add(taxi);
 
-const taxiMesh = build(cube(1,[1,0.9,0]),gl.TRIANGLES);
-const passengerMesh = build(cube(0.6,[0.1,1,0.3]),gl.TRIANGLES);
-const groundMesh = build(ground(80),gl.TRIANGLES);
-const gridMesh = build(grid(40,4),gl.LINES);
+    // Simple "buildings" as big spaced-out rectangles
+    const buildingMat = new THREE.MeshPhongMaterial({ color: 0x4444aa });
+    const buildingGeo = new THREE.BoxGeometry(6, 10, 6);
+    const buildingPositions = [
+      [20, 5, 20],
+      [-25, 5, 15],
+      [30, 5, -10],
+      [-15, 5, -25],
+      [0, 5, 30],
+      [25, 5, -30],
+      [-30, 5, 0]
+    ];
+    buildingPositions.forEach(pos => {
+      const b = new THREE.Mesh(buildingGeo, buildingMat);
+      b.position.set(pos[0], pos[1], pos[2]);
+      scene.add(b);
+    });
 
-// buildings
-const buildingMesh = build(cube(1,[0.4,0.4,0.9]),gl.TRIANGLES);
-const buildings=[];
-for(let i=0;i<40;i++){
-  const x=(Math.random()-0.5)*60;
-  const z=(Math.random()-0.5)*60;
-  if(Math.abs(x)<6 && Math.abs(z)<6){i--;continue;}
-  const h=2+Math.random()*8;
-  buildings.push({x,z,h});
-}
+    // Movement state
+    const keys = {};
+    let driftKey = false;
 
-// ---------- attribs/uniforms ----------
-const aPos=gl.getAttribLocation(prog,"aPos");
-const aCol=gl.getAttribLocation(prog,"aCol");
-const uMVP=gl.getUniformLocation(prog,"uMVP");
-gl.enable(gl.DEPTH_TEST);
+    window.addEventListener('keydown', (e) => {
+      keys[e.code] = true;
+      if (e.code === 'ShiftLeft') driftKey = true;
+    });
+    window.addEventListener('keyup', (e) => {
+      keys[e.code] = false;
+      if (e.code === 'ShiftLeft') driftKey = false;
+    });
 
-function bind(mesh){
-  gl.bindBuffer(gl.ARRAY_BUFFER,mesh.p);
-  gl.vertexAttribPointer(aPos,3,gl.FLOAT,false,0,0);
-  gl.enableVertexAttribArray(aPos);
-  gl.bindBuffer(gl.ARRAY_BUFFER,mesh.c);
-  gl.vertexAttribPointer(aCol,3,gl.FLOAT,false,0,0);
-  gl.enableVertexAttribArray(aCol);
-  if(mesh.i) gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,mesh.i);
-}
+    // Mobile detection (very rough)
+    const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    const joystickContainer = document.getElementById('joystick-container');
+    const joystick = document.getElementById('joystick');
+    const driftBtn = document.getElementById('drift-btn');
 
-function draw(mesh,model,view,proj){
-  const vp=mul(proj,view);
-  const mvp=mul(vp,model);
-  gl.uniformMatrix4fv(uMVP,false,new Float32Array(mvp));
-  if(mesh.mode===gl.TRIANGLES)
-    gl.drawElements(gl.TRIANGLES,mesh.count,gl.UNSIGNED_SHORT,0);
-  else
-    gl.drawArrays(gl.LINES,0,mesh.count);
-}
+    let joyActive = false;
+    let joyCenter = { x: 0, y: 0 };
+    let joyVector = { x: 0, y: 0 };
+    let driftTouch = false;
 
-// ---------- game state ----------
-let taxiX=0,taxiZ=0,taxiA=0,speed=0;
-const maxSpeed=0.35,accel=0.02,friction=0.015,steer=0.045;
-let passX=8,passZ=8;
-let score=0;
-const scoreEl=document.getElementById("score");
+    if (isTouch) {
+      joystickContainer.style.display = 'block';
+      driftBtn.style.display = 'block';
+    }
 
-const keys={KeyW:0,KeyS:0,KeyA:0,KeyD:0};
-onkeydown=e=>{if(keys[e.code]!=undefined)keys[e.code]=1};
-onkeyup=e=>{if(keys[e.code]!=undefined)keys[e.code]=0};
+    function handleJoyStart(e) {
+      e.preventDefault();
+      joyActive = true;
+      const rect = joystickContainer.getBoundingClientRect();
+      joyCenter.x = rect.left + rect.width / 2;
+      joyCenter.y = rect.top + rect.height / 2;
+    }
 
-function randomPassenger(){
-  let x,z;
-  do{
-    x=(Math.random()-0.5)*50;
-    z=(Math.random()-0.5)*50;
-  }while(Math.abs(x)<4 && Math.abs(z)<4);
-  passX=x;passZ=z;
-}
+    function handleJoyMove(e) {
+      if (!joyActive) return;
+      e.preventDefault();
+      const touch = e.touches ? e.touches[0] : e;
+      const dx = touch.clientX - joyCenter.x;
+      const dy = touch.clientY - joyCenter.y;
+      const maxDist = 40;
+      const dist = Math.min(Math.sqrt(dx * dx + dy * dy), maxDist);
+      const angle = Math.atan2(dy, dx);
+      const x = Math.cos(angle) * dist;
+      const y = Math.sin(angle) * dist;
+      joystick.style.transform = `translate(${x}px, ${y}px)`;
+      joyVector.x = x / maxDist;
+      joyVector.y = y / maxDist;
+    }
 
-// ---------- loop ----------
-let last=performance.now();
-function loop(now){
-  const dt=(now-last)/16.666; // ~1 at 60fps
-  last=now;
-  requestAnimationFrame(loop);
+    function handleJoyEnd(e) {
+      e && e.preventDefault();
+      joyActive = false;
+      joyVector.x = 0;
+      joyVector.y = 0;
+      joystick.style.transform = 'translate(0px, 0px)';
+    }
 
-  // physics
-  if(keys.KeyW) speed+=accel*dt;
-  else if(keys.KeyS) speed-=accel*0.8*dt;
-  else{
-    if(speed>0){speed-=friction*dt;if(speed<0)speed=0;}
-    if(speed<0){speed+=friction*dt;if(speed>0)speed=0;}
-  }
-  speed=Math.max(-maxSpeed*0.5,Math.min(maxSpeed,speed));
+    joystickContainer.addEventListener('touchstart', handleJoyStart);
+    joystickContainer.addEventListener('touchmove', handleJoyMove);
+    joystickContainer.addEventListener('touchend', handleJoyEnd);
+    joystickContainer.addEventListener('touchcancel', handleJoyEnd);
 
-  if(speed!==0){
-    if(keys.KeyA) taxiA+=steer*dt*(speed>0?1:-1);
-    if(keys.KeyD) taxiA-=steer*dt*(speed>0?1:-1);
-  }
+    driftBtn.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      driftTouch = true;
+    });
+    driftBtn.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      driftTouch = false;
+    });
 
-  taxiX+=Math.sin(taxiA)*speed*dt*60;
-  taxiZ+=Math.cos(taxiA)*speed*dt*60;
-  taxiX=Math.max(-38,Math.min(38,taxiX));
-  taxiZ=Math.max(-38,Math.min(38,taxiZ));
+    // Movement parameters
+    let velocity = 0;
+    let angle = 0;
+    const accel = 0.08;
+    const maxSpeed = 0.8;
+    const friction = 0.04;
+    const turnSpeed = 0.04;
+    const driftTurnMultiplier = 2.2;
+    const driftFrictionMultiplier = 0.3;
 
-  // pickup
-  const dx=taxiX-passX,dz=taxiZ-passZ;
-  if(Math.hypot(dx,dz)<1.2){
-    score++;
-    scoreEl.textContent=score;
-    randomPassenger();
-  }
+    function updateMovement() {
+      let forward = 0;
+      let turn = 0;
+      let drifting = driftKey || driftTouch;
 
-  // camera: behind & above, angled down
-  const camDist=10,camHeight=6;
-  const target=[taxiX,0.7,taxiZ];
-  let camX=taxiX-Math.sin(taxiA)*camDist;
-  let camZ=taxiZ-Math.cos(taxiA)*camDist;
-  let camY=camHeight;
-  // slight extra offset to show horizon
-  camY+=2;
+      if (!isTouch) {
+        // PC controls: WASD
+        if (keys['KeyW']) forward += 1;
+        if (keys['KeyS']) forward -= 1;
+        if (keys['KeyA']) turn += 1;
+        if (keys['KeyD']) turn -= 1;
+      } else {
+        // Mobile: joystick
+        forward = -joyVector.y; // up on screen is negative y
+        turn = joyVector.x;
+      }
 
-  const view=lookAt([camX,camY,camZ],target,[0,1,0]);
-  const proj=perspective(Math.PI/3,canvas.width/canvas.height,0.1,200);
+      // Acceleration
+      if (forward !== 0) {
+        velocity += forward * accel;
+        if (velocity > maxSpeed) velocity = maxSpeed;
+        if (velocity < -maxSpeed * 0.6) velocity = -maxSpeed * 0.6;
+      } else {
+        // friction
+        const fr = drifting ? friction * driftFrictionMultiplier : friction;
+        if (velocity > 0) {
+          velocity = Math.max(0, velocity - fr);
+        } else if (velocity < 0) {
+          velocity = Math.min(0, velocity + fr);
+        }
+      }
 
-  // render
-  gl.viewport(0,0,canvas.width,canvas.height);
-  gl.clearColor(0.03,0.03,0.06,1);
-  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+      // Turning
+      if (Math.abs(velocity) > 0.01 && turn !== 0) {
+        const turnMul = drifting ? driftTurnMultiplier : 1;
+        angle += turn * turnSpeed * turnMul * (velocity >= 0 ? 1 : -1);
+      }
 
-  // ground
-  bind(groundMesh);
-  draw(groundMesh,ident(),view,proj);
+      // Apply movement
+      taxi.rotation.y = angle;
+      const dx = Math.sin(angle) * velocity;
+      const dz = Math.cos(angle) * velocity;
+      taxi.position.x += dx;
+      taxi.position.z += dz;
+    }
 
-  // grid
-  bind(gridMesh);
-  draw(gridMesh,ident(),view,proj);
+    function updateCamera() {
+      const camDist = 12;
+      const camHeight = 6;
+      const offsetX = Math.sin(angle) * -camDist;
+      const offsetZ = Math.cos(angle) * -camDist;
+      camera.position.set(
+        taxi.position.x + offsetX,
+        taxi.position.y + camHeight,
+        taxi.position.z + offsetZ
+      );
+      camera.lookAt(taxi.position.x, taxi.position.y + 1, taxi.position.z);
+    }
 
-  // buildings
-  bind(buildingMesh);
-  for(const b of buildings){
-    let m=ident();
-    m=trans(m,b.x,b.h/2,b.z);
-    m=scale(m,2,b.h,2);
-    draw(buildingMesh,m,view,proj);
-  }
+    function animate() {
+      requestAnimationFrame(animate);
+      updateMovement();
+      updateCamera();
+      renderer.render(scene, camera);
+    }
+    animate();
 
-  // passenger
-  bind(passengerMesh);
-  let m=ident();
-  m=trans(m,passX,0.4,passZ);
-  draw(passengerMesh,m,view,proj);
-
-  // taxi
-  bind(taxiMesh);
-  m=ident();
-  m=trans(m,taxiX,0.6,taxiZ);
-  m=rotY(m,taxiA);
-  m=scale(m,1.4,0.7,2.2);
-  draw(taxiMesh,m,view,proj);
-}
-randomPassenger();
-requestAnimationFrame(loop);
-</script>
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
 </body>
 </html>
