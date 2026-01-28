@@ -76,14 +76,15 @@ window.onload = () => document.body.focus();
 <div id="joystick"><div id="thumb"></div></div>
 <div id="driftBtn">DRIFT</div>
 
-<!-- ⭐ LOAD THREE.JS FIRST (0.148.0) -->
-<script type="module" id="three-loader">
-    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.148.0/build/three.module.js";
-    window.THREE = THREE;
-</script>
+<!-- ⭐ EVERYTHING IS NOW INSIDE ONE MODULE -->
+<script type="module">
 
-<!-- ⭐ GAME CODE STARTS AFTER THREE IS LOADED -->
-<script>
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.148.0/build/three.module.js";
+
+/* -------------------------
+   YOUR ENTIRE GAME STARTS HERE
+-------------------------- */
+
 // Scene
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x202030);
@@ -279,6 +280,7 @@ onresize = () => {
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
 };
+
 </script>
 
 </body>
