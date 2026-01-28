@@ -15,7 +15,7 @@
   }
   canvas {
     display: block;
-    background: radial-gradient(circle at top, #0d0f16 0%, #05060b 45%, #020308 100%);
+    background: radial-gradient(circle at top, #0b0e16 0%, #05060b 45%, #020308 100%);
   }
 
   #joystickContainer, #driftButton {
@@ -43,7 +43,7 @@
     margin-left: -30px;
     margin-top: -30px;
     border-radius: 50%;
-    background: rgba(200,200,200,0.25);
+    background: rgba(220,220,220,0.25);
   }
 
   #driftButton {
@@ -76,6 +76,7 @@
 (function() {
   const canvas = document.getElementById('game');
   const gl = canvas.getContext('webgl', { antialias: true });
+  if (!gl) { alert('WebGL required'); return; }
 
   function resize() {
     canvas.width = innerWidth;
@@ -86,7 +87,7 @@
   resize();
 
   // MOBILE DETECTION
-  const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile/i.test(navigator.userAgent);
+  const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|Mobile/i.test(navigator.userAgent);
   const joyC = document.getElementById('joystickContainer');
   const joy = document.getElementById('joystick');
   const driftBtn = document.getElementById('driftButton');
@@ -95,7 +96,7 @@
     driftBtn.style.display = 'flex';
   }
 
-  // SHADERS (dark lighting)
+  // SHADERS
   const vsSrc = `
     attribute vec3 aPosition;
     attribute vec3 aNormal;
@@ -234,8 +235,8 @@
     buildings.push({x,z,h});
   }
 
-  // TAXI PHYSICS
-  let taxi={x:0,y:0.5,z:0,heading:0,vx:0,vz:0};
+  // TAXI PHYSICS (heading-based, medium drift)
+  let taxi={x:0,y:0.5,z:0,heading:0,speed:0};
 
   const keys={};
   addEventListener("keydown",e=>{keys[e.key.toLowerCase()]=true;});
@@ -293,77 +294,35 @@
 
     const drifting=keys['shift']||driftTouch;
 
-    const accel=22, friction=1.8, drag=0.35, maxSpeed=28;
-    const baseTurn=3.8, driftTurn=1.4;
-    const grip= drifting?0.05:0.22;
+    // Movement parameters
+    const accel=22;
+    const maxSpeed=28;
+    const friction=4;
+    const turnRate= drifting?5.2:3.8; // medium drift boost
 
-    const fd={x:Math.sin(taxi.heading),z:Math.cos(taxi.heading)};
-    const rd={x:Math.cos(taxi.heading),z:-Math.sin(taxi.heading)};
+    // Accelerate
+    taxi.speed += f * accel * dt;
+    taxi.speed -= taxi.speed * friction * dt;
+    taxi.speed = Math.max(Math.min(taxi.speed, maxSpeed), -maxSpeed*0.5);
 
-    // accelerate
-    taxi.vx+=fd.x*accel*f*dt;
-    taxi.vz+=fd.z*accel*f*dt;
+    // Steering
+    const steerFactor = Math.min(Math.abs(taxi.speed)/10, 1);
+    taxi.heading += s * turnRate * steerFactor * dt * (taxi.speed>=0?1:-1);
 
-    // friction + drag
-    taxi.vx*=1-drag*dt;
-    taxi.vz*=1-drag*dt;
+    // Movement
+    taxi.x += Math.sin(taxi.heading) * taxi.speed * dt;
+    taxi.z += Math.cos(taxi.heading) * taxi.speed * dt;
 
-    let sp=Math.hypot(taxi.vx,taxi.vz);
-    if(sp>0){
-      const ns=Math.max(sp-friction*dt,0);
-      const sc=ns/sp;
-      taxi.vx*=sc; taxi.vz*=sc;
-    }
-
-    // clamp
-    sp=Math.hypot(taxi.vx,taxi.vz);
-    if(sp>maxSpeed){
-      const sc=maxSpeed/sp;
-      taxi.vx*=sc; taxi.vz*=sc;
-      sp=maxSpeed;
-    }
-
-    // steering
-    const sf=Math.min(sp/10,1);
-    let turn=baseTurn+(drifting?driftTurn:0);
-    taxi.heading+=s*turn*sf*dt*(sp>=0?1:-1);
-
-    // drift alignment
-    if(sp>0.1){
-      const vd={x:taxi.vx/sp,z:taxi.vz/sp};
-      const td={
-        x:vd.x*(1-grip)+fd.x*grip,
-        z:vd.z*(1-grip)+fd.z*grip
-      };
-      const l=Math.hypot(td.x,td.z)||1;
-      taxi.vx=(td.x/l)*sp;
-      taxi.vz=(td.z/l)*sp;
-    }
-
-    // drift kick
-    if(drifting && f>0.2 && sp>6){
-      const k=12*dt*(Math.random()>0.5?1:-1);
-      taxi.vx+=rd.x*k;
-      taxi.vz+=rd.z*k;
-    }
-
-    // integrate
-    taxi.x+=taxi.vx*dt;
-    taxi.z+=taxi.vz*dt;
-
-    // CAMERA FOLLOWS VELOCITY DIRECTION (THE FIX)
-    const vsp=Math.hypot(taxi.vx,taxi.vz);
-    let camDir = vsp>0.1 ? {x:taxi.vx/vsp, z:taxi.vz/vsp} : fd;
-
+    // CAMERA LOCKED BEHIND CAR (GTA V style)
     const dist=9, h=4.2;
-    const tx=taxi.x - camDir.x*dist;
-    const tz=taxi.z - camDir.z*dist;
+    const tx=taxi.x - Math.sin(taxi.heading)*dist;
+    const tz=taxi.z - Math.cos(taxi.heading)*dist;
     const ty=taxi.y + h;
 
     const L=(a,b,t)=>a+(b-a)*t;
-    camX=L(camX,tx,0.09);
-    camY=L(camY,ty,0.09);
-    camZ=L(camZ,tz,0.09);
+    camX=L(camX,tx,0.1);
+    camY=L(camY,ty,0.1);
+    camZ=L(camZ,tz,0.1);
   }
 
   function render(){
@@ -372,4 +331,48 @@
     gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
 
     const asp=gl.drawingBufferWidth/gl.drawingBufferHeight;
-    const proj=persp(Math.PI/3,asp,0.1,
+    const proj=persp(Math.PI/3,asp,0.1,600);
+    const view=lookAt([camX,camY,camZ],[taxi.x,taxi.y+0.3,taxi.z],[0,1,0]);
+
+    gl.uniformMatrix4fv(uProj,false,proj);
+    gl.uniformMatrix4fv(uView,false,view);
+
+    gl.uniform3f(uLight,0.3,1,0.4);
+    gl.uniform3f(uAmb,0.10,0.10,0.13);
+
+    // Ground
+    let m=I();
+    m=T(m,[0,-0.5,0]);
+    m=S(m,[260,0.5,260]);
+    draw(groundCube,m);
+
+    // Buildings
+    for(const b of buildings){
+      let bm=I();
+      bm=T(bm,[b.x,b.h/2,b.z]);
+      bm=S(bm,[7,b.h,7]);
+      draw(buildingCube,bm);
+    }
+
+    // Taxi
+    let tm=I();
+    tm=T(tm,[taxi.x,taxi.y,taxi.z]);
+    tm=RY(tm,taxi.heading);
+    tm=S(tm,[1.6,0.7,3.2]);
+    draw(taxiCube,tm);
+  }
+
+  let last=0;
+  function loop(t){
+    const dt=Math.min((t-last)/1000,0.05);
+    last=t;
+    update(dt);
+    render();
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>
